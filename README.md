@@ -1,44 +1,46 @@
 # RevivePass
 
-RevivePass is a Solana migration portal that helps communities transition from another chain using snapshot-based eligibility and one-time NFT claims.
+RevivePass is a Solana migration portal for moving legacy-chain communities with snapshot-based eligibility and one-time NFT claims.
 
 ## Project Overview
 
-RevivePass converts migration operations into a verifiable flow:
+RevivePass turns migration onboarding into an auditable flow:
 
-1. Admin creates a migration campaign.
-2. Admin uploads a snapshot CSV (`evm_address,solana_wallet,amount`).
-3. Community members connect Solana wallets and verify eligibility.
-4. Eligible wallets claim exactly one Revival Pass NFT.
-5. Dashboard tracks total holders, claimed, remaining, and claim history.
+1. Create a migration campaign.
+2. Upload a snapshot CSV (`evm_address,solana_wallet,amount`).
+3. Community wallets run eligibility checks.
+4. Eligible wallets claim one Revival Pass NFT.
+5. Dashboard tracks progress and claim history.
 
 ## Problem Statement
 
-Cross-chain community migrations are usually fragmented: snapshots live in spreadsheets, eligibility checks are manual, and participation proof is weak. RevivePass provides a structured migration pipeline with wallet signatures, claim idempotency, and onchain NFT issuance.
+Community migrations are often fragmented across spreadsheets, forms, and manual checks. This causes weak verification, duplicated claims, and unclear progress. RevivePass centralizes the process with signed wallet verification, deterministic eligibility, idempotent claiming, and onchain NFT issuance.
 
 ## Features
 
 - Snapshot-driven eligibility with CSV validation
 - One-claim-per-wallet-per-migration enforcement
-- Solana wallet signature auth flow (nonce + verify)
-- NFT minting via Metaplex Umi
-- Claim idempotency (repeat claim returns existing mint)
-- Explorer link returned after claim
-- Migration dashboard with progress bar + claim history chart
-- Migration checklist page (Sunrise-compatible migration)
-- Demo seed script and one-click setup script
-- Railway-ready monorepo with separate `web` and `api` services
+- Nonce + signature authentication flow
+- NFT minting through Metaplex Umi
+- Claim idempotency (retries return existing claim)
+- Explorer link returned after mint
+- Dashboard with claimed/remaining metrics and claim history chart
+- Migration checklist page for operational rollout
+- Demo seed data and one-click setup script
+- Railway-ready monorepo with separate `apps/web` and `apps/api` services
 
-## Architecture
+## Architecture Explanation
+
+The web app handles campaign setup, claim UX, and analytics. The API validates snapshots, manages claim state in SQLite, verifies signatures, and mints NFTs on Solana.
 
 ```mermaid
 flowchart LR
-  A[Admin UI apps/web] -->|Create Migration + Upload CSV| B[Fastify API apps/api]
+  A[Admin and User UI apps/web] -->|Create migration, upload CSV, claim actions| B[Fastify API apps/api]
   B --> C[(SQLite)]
-  D[User Wallet] -->|Nonce + Signature| B
+  D[Solana Wallet] -->|Nonce + signature| B
   B -->|Mint Revival Pass| E[Solana RPC]
   E --> F[Metaplex Token Metadata Program]
-  B -->|Stats/Eligibility| A
+  B -->|Eligibility and stats| A
 ```
 
 ```mermaid
@@ -49,18 +51,18 @@ sequenceDiagram
   participant DB
   participant Solana
 
-  Admin->>Web: Upload snapshot CSV
+  Admin->>Web: Create migration + upload snapshot
   Web->>API: POST /migrations
   Web->>API: POST /migrations/:slug/snapshot
-  API->>DB: Store snapshot_entries
+  API->>DB: Store migrations and snapshot_entries
 
   Note over Web,API: Claim flow
   Web->>API: POST /auth/nonce
   API->>DB: Save nonce
   Web->>API: POST /auth/verify
-  API->>DB: Check nonce + signature
+  API->>DB: Verify nonce and signature
   Web->>API: POST /migrations/:slug/claim
-  API->>DB: Validate eligibility + idempotency
+  API->>DB: Validate eligibility and idempotency
   API->>Solana: Mint NFT via Umi
   API->>DB: Persist claim
   API-->>Web: txSignature + explorer link
@@ -72,7 +74,7 @@ sequenceDiagram
 - Frontend: Next.js App Router, TailwindCSS, shadcn-style UI components, framer-motion, recharts, Solana wallet adapter
 - Backend: Fastify, SQLite (`better-sqlite3`), zod, csv-parse
 - Solana: `@solana/web3.js`, `@metaplex-foundation/umi`, `@metaplex-foundation/mpl-token-metadata`
-- Deployment: Railway (two services from one repo)
+- Deployment: Railway
 
 ## Monorepo Structure
 
@@ -104,44 +106,32 @@ evm_address,solana_wallet,amount
 Validation rules:
 
 - Headers must include `evm_address`, `solana_wallet`, `amount`
-- `solana_wallet` must be present per row
-- `amount` must be numeric and >= 1
+- `solana_wallet` is required per row
+- `amount` must be numeric and greater than or equal to `1`
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill:
+Copy `.env.example` to `.env`.
 
-- `SOLANA_RPC_URL`
-  - Solana RPC endpoint
-  - Example: `https://api.devnet.solana.com`
-- `PRIVATE_KEY`
-  - Backend mint authority wallet private key as JSON array
-  - Used by API to mint Revival Pass NFTs
-- `PASS_IMAGE_URL`
-  - Public URL to NFT image
-  - Example: `https://raw.githubusercontent.com/<user>/<repo>/<branch>/apps/web/public/assets/pass.png`
-- `DB_PATH`
-  - SQLite path
-  - Example: `./data/revivepass.sqlite`
-- `NEXT_PUBLIC_API_URL`
-  - Public API URL used by frontend
-  - Local example: `http://localhost:4000`
+| Variable | Purpose | Example |
+| --- | --- | --- |
+| `SOLANA_RPC_URL` | Solana RPC endpoint used by API mint logic | `https://api.devnet.solana.com` |
+| `PRIVATE_KEY` | Mint authority private key as JSON array | `[12,34,...]` |
+| `PASS_IMAGE_URL` | Public NFT image URL used in metadata | `https://raw.githubusercontent.com/<user>/<repo>/<branch>/apps/web/public/assets/pass.png` |
+| `DB_PATH` | SQLite database file path | `./data/revivepass.sqlite` |
+| `NEXT_PUBLIC_API_URL` | Frontend API base URL | `http://localhost:4000` |
 
 ## Local Setup
 
-### One-click setup
+### One-Click Setup
 
 ```bash
 bash scripts/setup.sh
 ```
 
-This runs:
+This installs dependencies, initializes SQLite, and runs seed data.
 
-1. `pnpm install`
-2. DB initialization
-3. Demo seed
-
-### Manual setup
+### Manual Setup
 
 ```bash
 pnpm install
@@ -150,7 +140,7 @@ pnpm seed
 pnpm dev
 ```
 
-Services:
+Local services:
 
 - Web: `http://localhost:3000`
 - API: `http://localhost:4000`
@@ -168,63 +158,60 @@ Services:
 
 ## Sponsor Integrations Explanation
 
-- Solana web3 (`@solana/web3.js`)
-  - Wallet public key handling and signature verification compatibility
-- Metaplex Umi + Token Metadata
-  - Backend NFT mint execution for Revival Pass claims
-- Wallet adapter (`@solana/wallet-adapter-react`)
-  - Frontend wallet connect + sign message authentication
-- SQLite (`better-sqlite3`)
-  - Snapshot entries, migrations, claims, and auth nonces persistence
+- Solana web3 (`@solana/web3.js`): wallet addressing and transaction compatibility
+- Metaplex Umi + Token Metadata: backend NFT mint execution
+- Wallet adapter (`@solana/wallet-adapter-react`): wallet connect and signature UX
+- SQLite (`better-sqlite3`): migrations, snapshots, claims, and nonce persistence
 
-## Sunrise Migration Alignment
+## Sunrise Migration Alignment (Optional)
 
-RevivePass aligns with Sunrise onboarding philosophy by making migration onboarding concrete and measurable: import legacy holder snapshots, onboard wallets, distribute migration access passes, and monitor activation via a dashboard.
+RevivePass supports Sunrise-style onboarding by structuring migration into snapshot preparation, wallet onboarding, pass distribution, and measurable activation tracking.
 
-References used for alignment:
+Reference materials:
 
-- https://www.sunrisedefi.com/
-- https://docs.sunrisedefi.com/
-- https://solana.com/graveyard-hack
+- [Sunrise website](https://www.sunrisedefi.com/)
+- [Sunrise docs](https://docs.sunrisedefi.com/)
+- [Solana Graveyard Hack page](https://solana.com/graveyard-hack)
 
 No Sunrise API integration is required.
 
 ## Railway Deployment Guide
 
-Create **two Railway services** from this same repository:
+Create two Railway services from this repository:
 
-1. API service
-   - Root directory: `apps/api`
-   - Start command: `pnpm --filter @revivepass/api start`
-   - Required env: `SOLANA_RPC_URL`, `PRIVATE_KEY`, `PASS_IMAGE_URL`, `DB_PATH`, `PORT`
-2. Web service
-   - Root directory: `apps/web`
-   - Start command: `pnpm --filter @revivepass/web start`
-   - Required env: `NEXT_PUBLIC_API_URL`
+1. `apps/api`
+- Root directory: `apps/api`
+- Start command: `pnpm --filter @revivepass/api start`
+- Required env: `SOLANA_RPC_URL`, `PRIVATE_KEY`, `PASS_IMAGE_URL`, `DB_PATH`, `PORT`
 
-Notes:
+2. `apps/web`
+- Root directory: `apps/web`
+- Start command: `pnpm --filter @revivepass/web start`
+- Required env: `NEXT_PUBLIC_API_URL`
 
-- Set `NEXT_PUBLIC_API_URL` in web service to your deployed API URL.
-- Keep `PASS_IMAGE_URL` public and stable so minted metadata resolves correctly.
+Deployment notes:
+
+- Set `NEXT_PUBLIC_API_URL` in the web service to the API Railway URL.
+- Keep `PASS_IMAGE_URL` public and stable so minted metadata resolves consistently.
 
 ## Demo Walkthrough
 
-1. Open `/upload`
-2. Create migration slug (or use `sunrise-community`)
-3. Upload `samples/demo.csv`
-4. Share `/claim/<slug>` with eligible wallets
-5. Claim from `/claim/<slug>`
-6. Track metrics in `/dashboard/<slug>`
+1. Open the app at `/` and choose `Create`.
+2. Create a migration.
+3. Upload `samples/demo.csv`.
+4. Share `/claim/<slug>` with eligible wallets.
+5. Claim from `/claim/<slug>`.
+6. Track progress in `/dashboard/<slug>`.
 
 ## Screenshots
 
-Add screenshots after running locally:
+Store screenshots in:
 
-- Landing: `apps/web/public/screenshots/landing.png`
-- Upload: `apps/web/public/screenshots/upload.png`
-- Claim: `apps/web/public/screenshots/claim.png`
-- Dashboard: `apps/web/public/screenshots/dashboard.png`
-- Checklist: `apps/web/public/screenshots/checklist.png`
+- `apps/web/public/screenshots/landing.png`
+- `apps/web/public/screenshots/upload.png`
+- `apps/web/public/screenshots/claim.png`
+- `apps/web/public/screenshots/dashboard.png`
+- `apps/web/public/screenshots/checklist.png`
 
 ## License
 

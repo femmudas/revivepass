@@ -1,21 +1,20 @@
 # RevivePass
 
-RevivePass is a Solana migration portal for moving legacy-chain communities using snapshot-based eligibility, one-time NFT claims, loyalty rewards, and social activation.
+RevivePass is a Solana migration portal for moving legacy-chain communities using snapshot-based eligibility, one-time NFT claims, and social activation through Tapestry.
 
 ## Project Overview
 
-RevivePass runs migration operations as a verifiable flow:
+RevivePass runs migration onboarding as a verifiable flow:
 
 1. Admin creates a migration campaign.
 2. Admin uploads snapshot CSV (`evm_address,solana_wallet,amount`).
-3. Wallets verify eligibility and claim exactly one NFT.
-4. Claim completion triggers Torque reward logic.
-5. Migration completion is posted to Tapestry social feed.
-6. Dashboard tracks claimed, remaining, and claim history.
+3. Wallets verify eligibility and claim one NFT.
+4. Claim completion can publish an announcement to Tapestry.
+5. Dashboard tracks claimed, remaining, and claim history.
 
 ## Problem Statement
 
-Most migrations are fragmented across spreadsheets, forms, and manual follow-up. That creates weak verification and low engagement. RevivePass centralizes migration eligibility, signed claim authorization, onchain NFT issuance, loyalty rewards, and social visibility in one workflow.
+Community migrations are often fragmented across spreadsheets and manual checks. RevivePass centralizes eligibility, signed wallet verification, NFT minting, and social sharing in one product flow.
 
 ## Features
 
@@ -23,12 +22,11 @@ Most migrations are fragmented across spreadsheets, forms, and manual follow-up.
 - One-wallet-per-migration claim enforcement
 - Nonce + signature authentication
 - NFT minting with Metaplex Umi
-- Metadata URI from Pinata IPFS (`METADATA_URI`)
-- Torque reward trigger after successful claim
+- Metadata URI via Pinata IPFS (`METADATA_URI`)
 - Tapestry profile/follow/post/like/comment integration
 - Social feed endpoint and frontend social page
 - Migration dashboard with progress and claim history
-- Seeded demo campaigns: `loyalty-campaign`, `social-campaign`
+- Seeded campaigns: `community-revival-demo`, `social-campaign`
 
 ## Architecture
 
@@ -39,8 +37,7 @@ flowchart LR
   D[Wallet] -->|Nonce + Signature| B
   B -->|Mint NFT| E[Solana RPC]
   E --> F[Metaplex Token Metadata]
-  A -->|Reward Hook| G[Torque SDK]
-  B -->|Social Proxy| H[Tapestry API]
+  B -->|Social Proxy| G[Tapestry API]
   A -->|Social UI| B
 ```
 
@@ -51,7 +48,6 @@ sequenceDiagram
   participant API
   participant DB
   participant Solana
-  participant Torque
   participant Tapestry
 
   User->>Web: Claim NFT
@@ -61,7 +57,6 @@ sequenceDiagram
   API->>Solana: Mint NFT (METADATA_URI)
   API->>DB: Save claim
   API-->>Web: txSignature + explorer
-  Web->>Torque: awardMigrationReward()
   Web->>API: POST /api/social/post
   API->>Tapestry: Publish migration announcement
 ```
@@ -69,7 +64,7 @@ sequenceDiagram
 ## Tech Stack
 
 - Language: TypeScript
-- Frontend: Next.js App Router, TailwindCSS, shadcn-style UI, framer-motion, recharts, Solana wallet adapter, Torque React SDK
+- Frontend: Next.js App Router, TailwindCSS, shadcn-style UI, framer-motion, recharts, Solana wallet adapter
 - Backend: Fastify, SQLite (`better-sqlite3`), zod, csv-parse
 - Solana: `@solana/web3.js`, `@metaplex-foundation/umi`, `@metaplex-foundation/mpl-token-metadata`
 - Social: Tapestry REST API proxy module
@@ -113,10 +108,6 @@ Copy `.env.example` to `.env` and configure:
 | `METADATA_URI` | Pinata IPFS metadata JSON URL used in mint transaction | `https://gateway.pinata.cloud/ipfs/<cid>` |
 | `DB_PATH` | SQLite database path | `./data/revivepass.sqlite` |
 | `NEXT_PUBLIC_API_URL` | Frontend API base URL | `http://localhost:4000` |
-| `TORQUE_API_URL` | Torque API URL | `https://api.torque.so` |
-| `TORQUE_RPC_URL` | Torque RPC URL | `https://api.devnet.solana.com` |
-| `TORQUE_AUTH_DOMAIN` | Torque auth domain | `revivepass.local` |
-| `NEXT_PUBLIC_TORQUE_OFFER_ID` | Optional Torque offer/campaign id used by reward hook | `` |
 | `TAPESTRY_API_URL` | Tapestry API base URL | `https://api.usetapestry.dev` |
 | `TAPESTRY_API_KEY` | Tapestry API key | `replace-with-tapestry-api-key` |
 
@@ -146,7 +137,7 @@ Local services:
 
 `pnpm seed` creates and snapshots:
 
-- `loyalty-campaign` - Loyalty Migration Rewards
+- `community-revival-demo` - Community Revival Demo
 - `social-campaign` - Migration Social Share
 
 ## API Endpoints
@@ -173,22 +164,17 @@ Social proxy:
 - `POST /api/social/comment`
 - `GET /api/social/feed`
 
-## Torque Integration
-
-- App is wrapped with `TorqueProvider` in the web provider tree.
-- `useReward` hook handles user authentication via Torque SDK and triggers reward award attempts after successful claims.
-- Claim UI shows reward feedback so users can confirm loyalty progression.
-
 ## Tapestry Integration
 
 - Backend module `apps/api/src/lib/tapestry.ts` wraps profile, follow/unfollow, post, like, comment, and feed calls.
 - Backend route `apps/api/src/routes/social.ts` exposes proxy endpoints for frontend usage.
-- Frontend page `/social` provides profile management and migration feed interactions.
+- Frontend page `/social` provides profile management and feed interactions.
 - Claim completion posts a migration announcement through `/api/social/post`.
 
-## Legacy Alignment Note
+## Notes
 
-Previous Sunrise alignment notes were removed. Migration engagement is now handled directly through Torque (loyalty) and Tapestry (social).
+- The previous loyalty module has been deprecated and removed.
+- Migration and social flows continue to work without that dependency.
 
 ## Railway Deployment
 
@@ -202,7 +188,7 @@ Create two Railway services from this repo:
 2. Web service
 - Root directory: `apps/web`
 - Start command: `pnpm --filter @revivepass/web start`
-- Required env: `NEXT_PUBLIC_API_URL`, `TORQUE_API_URL`, `TORQUE_RPC_URL`, `TORQUE_AUTH_DOMAIN`
+- Required env: `NEXT_PUBLIC_API_URL`
 
 ## Testing and Validation
 
@@ -215,12 +201,11 @@ pnpm run build
 Run local integration flow:
 
 1. `pnpm dev`
-2. Create or use slug `loyalty-campaign`
-3. Upload `samples/demo.csv` (if needed)
+2. Create or use slug `social-campaign`
+3. Upload `samples/demo.csv` if needed
 4. Claim NFT from `/claim/<slug>`
-5. Confirm reward message appears in claim UI
-6. Open `/social` and confirm profile/feed actions
-7. Verify dashboard metrics at `/dashboard/<slug>`
+5. Open `/social` and confirm profile/feed actions
+6. Verify dashboard metrics at `/dashboard/<slug>`
 
 ## License
 

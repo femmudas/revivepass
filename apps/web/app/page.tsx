@@ -13,8 +13,6 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { RewardBanner } from "@/components/reward-banner";
-import { useReward } from "@/hooks/use-reward";
 import { socialApi } from "@/lib/social";
 
 type Tab = "home" | "create" | "claim" | "dashboard" | "checklist";
@@ -142,15 +140,13 @@ function WalletControl() {
 
 export default function RevivePassPortal() {
   const { publicKey, signMessage } = useWallet();
-  const { awarding, awardMigrationReward } = useReward();
   const wallet = useMemo(() => publicKey?.toBase58() ?? "", [publicKey]);
 
   const [tab, setTab] = useState<Tab>("home");
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [slug, setSlug] = useState("loyalty-campaign");
+  const [slug, setSlug] = useState("social-campaign");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [rewardNotice, setRewardNotice] = useState("");
   const [metadataPreview, setMetadataPreview] = useState<MetadataResponse | null>(null);
 
   const [form, setForm] = useState({
@@ -192,12 +188,12 @@ export default function RevivePassPortal() {
   }, []);
 
   const ensureDemoSlug = async (preferred?: string) => {
-    const candidates = [preferred, "loyalty-campaign", "social-campaign"].filter(Boolean) as string[];
+    const candidates = [preferred, "social-campaign", "community-revival-demo"].filter(Boolean) as string[];
     for (const candidate of candidates) {
       try {
         await apiRequest<MigrationResponse>(`/migrations/${candidate}`);
         setSlug(candidate);
-        if (candidate === "loyalty-campaign" || candidate === "social-campaign") {
+        if (candidate === "social-campaign" || candidate === "community-revival-demo") {
           setNotice(`Demo slug ready: ${candidate}`);
         }
         return;
@@ -210,10 +206,10 @@ export default function RevivePassPortal() {
       const createdDemo = await apiRequest<{ migration: MigrationResponse["migration"] }>("/migrations", {
         method: "POST",
         body: {
-          name: "Loyalty Migration Rewards",
-          slug: "loyalty-campaign",
-          description: "Earn loyalty tokens through Torque when you migrate to Solana.",
-          symbol: "LOYALTY",
+          name: "Migration Social Share",
+          slug: "social-campaign",
+          description: "Share your migration journey via Tapestry and connect with others.",
+          symbol: "SOCIAL",
         },
       });
       setSlug(createdDemo.migration.slug);
@@ -368,11 +364,6 @@ export default function RevivePassPortal() {
       );
       setClaimResult({ tx: res.txSignature, mint: res.mintAddress, explorer: res.explorer });
 
-      const rewardResult = await awardMigrationReward({
-        walletAddress: wallet,
-        migrationSlug: slug,
-      });
-
       let socialMessage = "Tapestry post skipped.";
       try {
         const profile = await socialApi.createOrGetProfile(wallet);
@@ -382,7 +373,7 @@ export default function RevivePassPortal() {
         socialMessage = `Tapestry post failed: ${(socialError as Error).message}`;
       }
 
-      setRewardNotice(`${rewardResult.message} ${socialMessage}`);
+      setNotice(socialMessage);
       setEligibilityState("done");
     } catch (e) {
       setError((e as Error).message);
@@ -418,8 +409,7 @@ export default function RevivePassPortal() {
     }
   };
 
-  const canClaim =
-    eligibilityState === "eligible" && Boolean(wallet) && Boolean(signMessage) && !awarding;
+  const canClaim = eligibilityState === "eligible" && Boolean(wallet) && Boolean(signMessage);
 
   return (
     <div className="min-h-screen text-foreground">
@@ -547,8 +537,8 @@ export default function RevivePassPortal() {
                   size="default"
                   className="text-xs"
                   onClick={() => {
-                    setSlug("loyalty-campaign");
-                    setNotice("Demo slug selected: loyalty-campaign");
+                    setSlug("social-campaign");
+                    setNotice("Demo slug selected: social-campaign");
                   }}
                 >
                   Use Demo Slug
@@ -711,8 +701,6 @@ export default function RevivePassPortal() {
                   "Claim Revival Pass"
                 )}
               </Button>
-
-              {rewardNotice && <RewardBanner description={rewardNotice} tone="success" />}
 
               {claimResult && (
                 <div className="space-y-2 rounded-xl border border-border bg-background p-3 text-sm">

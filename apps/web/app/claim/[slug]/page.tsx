@@ -9,9 +9,7 @@ import { apiRequest } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { useReward } from "@/hooks/use-reward";
 import { socialApi } from "@/lib/social";
-import { RewardBanner } from "@/components/reward-banner";
 
 type Eligibility = {
   eligible: boolean;
@@ -37,18 +35,16 @@ type MetadataResponse = {
 export default function ClaimPage() {
   const { slug } = useParams<{ slug: string }>();
   const { publicKey, signMessage } = useWallet();
-  const { awarding, awardMigrationReward } = useReward();
 
   const [eligibility, setEligibility] = useState<Eligibility | null>(null);
   const [status, setStatus] = useState<string>("Connect your wallet to begin.");
   const [loading, setLoading] = useState(false);
   const [explorer, setExplorer] = useState<string | null>(null);
-  const [rewardStatus, setRewardStatus] = useState("");
   const [metadataPreview, setMetadataPreview] = useState<MetadataResponse | null>(null);
 
   const wallet = useMemo(() => publicKey?.toBase58(), [publicKey]);
   const alreadyClaimed = Boolean(eligibility?.alreadyClaimed || eligibility?.already_claimed);
-  const canClaim = Boolean(wallet && eligibility?.eligible && !alreadyClaimed && !loading && !awarding);
+  const canClaim = Boolean(wallet && eligibility?.eligible && !alreadyClaimed && !loading);
 
   useEffect(() => {
     if (!wallet) {
@@ -121,11 +117,6 @@ export default function ClaimPage() {
       );
       setExplorer(claimRes.explorer);
 
-      const rewardResult = await awardMigrationReward({
-        walletAddress: wallet,
-        migrationSlug: slug,
-      });
-
       let socialMessage = "Tapestry post skipped.";
       try {
         const profile = await socialApi.createOrGetProfile(wallet);
@@ -135,7 +126,7 @@ export default function ClaimPage() {
         socialMessage = `Tapestry post failed: ${(socialError as Error).message}`;
       }
 
-      setRewardStatus(`${rewardResult.message} ${socialMessage}`);
+      setStatus((prev) => `${prev} ${socialMessage}`.trim());
     } catch (e) {
       setStatus((e as Error).message);
     } finally {
@@ -183,7 +174,6 @@ export default function ClaimPage() {
           {loading ? "Processing..." : alreadyClaimed ? "Already Claimed" : "Claim Revival Pass"}
         </Button>
         <p className="text-sm text-foreground/75">{status}</p>
-        {rewardStatus && <RewardBanner description={rewardStatus} tone="success" />}
         {explorer && (
           <a href={explorer} target="_blank" rel="noreferrer" className="text-sm text-accent underline">
             View transaction on Solana Explorer

@@ -13,16 +13,10 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
-  const torqueConfig = {
-    apiUrl: process.env.TORQUE_API_URL ?? "https://api.torque.so",
-    rpcUrl: process.env.TORQUE_RPC_URL ?? process.env.SOLANA_RPC_URL ?? "https://api.devnet.solana.com",
-    authDomain: process.env.TORQUE_AUTH_DOMAIN ?? "revivepass.local",
-  };
-
   return (
     <html lang="en">
       <body className={`${spaceGrotesk.variable} antialiased`}>
-        <WalletContextProvider torqueConfig={torqueConfig}>
+        <WalletContextProvider>
           <main className="mx-auto w-full max-w-[1240px] px-4 pb-10 pt-6 md:px-8">{children}</main>
         </WalletContextProvider>
       </body>

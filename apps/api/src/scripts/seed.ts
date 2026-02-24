@@ -7,10 +7,10 @@ runMigrations();
 
 const campaigns = [
   {
-    slug: "loyalty-campaign",
-    name: "Loyalty Migration Rewards",
-    description: "Earn loyalty tokens through Torque when you migrate to Solana.",
-    symbol: "LOYALTY",
+    slug: "community-revival-demo",
+    name: "Community Revival Demo",
+    description: "Demo migration campaign for testing claim and dashboard flow.",
+    symbol: "REVIVE",
   },
   {
     slug: "social-campaign",

@@ -15,6 +15,13 @@ type Migration = {
   total_snapshot_count: number;
 };
 
+type MetadataJson = {
+  name?: string;
+  symbol?: string;
+  description?: string;
+  image?: string;
+};
+
 const getMigration = (slug: string) =>
   db
     .prepare(`SELECT * FROM migrations WHERE slug = ?`)
@@ -25,6 +32,18 @@ const clusterSuffix = env.SOLANA_RPC_URL.includes("devnet")
   : env.SOLANA_RPC_URL.includes("testnet")
     ? "?cluster=testnet"
     : "";
+
+const loadMetadataJson = async (): Promise<MetadataJson | null> => {
+  try {
+    const response = await fetch(env.METADATA_URI, { cache: "no-store" });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as MetadataJson;
+  } catch {
+    return null;
+  }
+};
 
 export const registerMigrationRoutes = async (app: FastifyInstance) => {
   app.post("/migrations", async (request, reply) => {
@@ -132,11 +151,14 @@ export const registerMigrationRoutes = async (app: FastifyInstance) => {
       return reply.status(404).send({ error: "Migration not found" });
     }
 
+    const upstream = await loadMetadataJson();
+
     return {
-      name: `${migration.name} Revival Pass`,
-      symbol: migration.symbol,
-      description: migration.description,
-      image: env.PASS_IMAGE_URL,
+      metadataUri: env.METADATA_URI,
+      name: upstream?.name ?? `${migration.name} Revival Pass`,
+      symbol: upstream?.symbol ?? migration.symbol,
+      description: upstream?.description ?? migration.description,
+      image: upstream?.image ?? null,
     };
   });
 
@@ -251,16 +273,11 @@ export const registerMigrationRoutes = async (app: FastifyInstance) => {
       return reply.status(403).send({ error: "Wallet is not in snapshot" });
     }
 
-    const proto = (request.headers["x-forwarded-proto"] as string | undefined) ?? request.protocol;
-    const host = (request.headers["x-forwarded-host"] as string | undefined) ?? request.headers.host;
-    const baseUrl = host ? `${proto}://${host}` : `${proto}://${request.hostname}`;
-    const metadataUri = `${baseUrl}/migrations/${migration.slug}/metadata`;
-
     let minted: { txSignature: string; mintAddress: string };
     try {
       minted = await mintRevivalPass({
         ownerWallet: parsed.data.wallet,
-        uri: metadataUri,
+        uri: env.METADATA_URI,
         name: `${migration.name} Revival Pass`,
         symbol: migration.symbol,
       });

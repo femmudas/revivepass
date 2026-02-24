@@ -6,12 +6,16 @@ import { Check, ChevronDown, Copy, ExternalLink, Loader2, LogOut, Menu, Wallet, 
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import bs58 from "bs58";
+import Link from "next/link";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { apiRequest } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { RewardBanner } from "@/components/reward-banner";
+import { useReward } from "@/hooks/use-reward";
+import { socialApi } from "@/lib/social";
 
 type Tab = "home" | "create" | "claim" | "dashboard" | "checklist";
 
@@ -33,6 +37,14 @@ type EligibilityResponse = {
   alreadyClaimed?: boolean;
   already_claimed?: boolean;
   existingClaim: { txSignature: string; mintAddress: string; explorer: string } | null;
+};
+
+type MetadataResponse = {
+  metadataUri: string;
+  name: string;
+  symbol: string;
+  description: string;
+  image: string | null;
 };
 
 const tabs: { id: Tab; label: string }[] = [
@@ -130,13 +142,16 @@ function WalletControl() {
 
 export default function RevivePassPortal() {
   const { publicKey, signMessage } = useWallet();
+  const { awarding, awardMigrationReward } = useReward();
   const wallet = useMemo(() => publicKey?.toBase58() ?? "", [publicKey]);
 
   const [tab, setTab] = useState<Tab>("home");
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [slug, setSlug] = useState("community-revival-demo");
+  const [slug, setSlug] = useState("loyalty-campaign");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [rewardNotice, setRewardNotice] = useState("");
+  const [metadataPreview, setMetadataPreview] = useState<MetadataResponse | null>(null);
 
   const [form, setForm] = useState({
     title: "",
@@ -177,12 +192,12 @@ export default function RevivePassPortal() {
   }, []);
 
   const ensureDemoSlug = async (preferred?: string) => {
-    const candidates = [preferred, "community-revival-demo"].filter(Boolean) as string[];
+    const candidates = [preferred, "loyalty-campaign", "social-campaign"].filter(Boolean) as string[];
     for (const candidate of candidates) {
       try {
         await apiRequest<MigrationResponse>(`/migrations/${candidate}`);
         setSlug(candidate);
-        if (candidate === "community-revival-demo") {
+        if (candidate === "loyalty-campaign" || candidate === "social-campaign") {
           setNotice(`Demo slug ready: ${candidate}`);
         }
         return;
@@ -195,10 +210,10 @@ export default function RevivePassPortal() {
       const createdDemo = await apiRequest<{ migration: MigrationResponse["migration"] }>("/migrations", {
         method: "POST",
         body: {
-          name: "Community Revival Demo",
-          slug: "community-revival-demo",
-          description: "Demo migration for testing RevivePass claim and dashboard flow.",
-          symbol: "REVIVE",
+          name: "Loyalty Migration Rewards",
+          slug: "loyalty-campaign",
+          description: "Earn loyalty tokens through Torque when you migrate to Solana.",
+          symbol: "LOYALTY",
         },
       });
       setSlug(createdDemo.migration.slug);
@@ -207,6 +222,17 @@ export default function RevivePassPortal() {
       setNotice("Create a migration to start your claim and dashboard flow.");
     }
   };
+
+  useEffect(() => {
+    if (!slug.trim()) {
+      setMetadataPreview(null);
+      return;
+    }
+
+    apiRequest<MetadataResponse>(`/migrations/${slug.trim()}/metadata`)
+      .then((data) => setMetadataPreview(data))
+      .catch(() => setMetadataPreview(null));
+  }, [slug]);
 
   const openTab = (next: Tab) => {
     setTab(next);
@@ -341,6 +367,22 @@ export default function RevivePassPortal() {
         }
       );
       setClaimResult({ tx: res.txSignature, mint: res.mintAddress, explorer: res.explorer });
+
+      const rewardResult = await awardMigrationReward({
+        walletAddress: wallet,
+        migrationSlug: slug,
+      });
+
+      let socialMessage = "Tapestry post skipped.";
+      try {
+        const profile = await socialApi.createOrGetProfile(wallet);
+        await socialApi.postMigration(profile.profile.id, slug);
+        socialMessage = "Tapestry announcement posted.";
+      } catch (socialError) {
+        socialMessage = `Tapestry post failed: ${(socialError as Error).message}`;
+      }
+
+      setRewardNotice(`${rewardResult.message} ${socialMessage}`);
       setEligibilityState("done");
     } catch (e) {
       setError((e as Error).message);
@@ -376,7 +418,8 @@ export default function RevivePassPortal() {
     }
   };
 
-  const canClaim = eligibilityState === "eligible" && Boolean(wallet) && Boolean(signMessage);
+  const canClaim =
+    eligibilityState === "eligible" && Boolean(wallet) && Boolean(signMessage) && !awarding;
 
   return (
     <div className="min-h-screen text-foreground">
@@ -401,6 +444,12 @@ export default function RevivePassPortal() {
                   {item.label}
                 </button>
               ))}
+              <Link
+                href="/social"
+                className="rounded-lg border border-border px-3 py-1.5 text-sm text-muted transition hover:border-neon/60 hover:text-foreground"
+              >
+                Social
+              </Link>
             </nav>
 
             <div className="flex items-center gap-2">
@@ -431,6 +480,13 @@ export default function RevivePassPortal() {
                     {item.label}
                   </button>
                 ))}
+                <Link
+                  href="/social"
+                  className="rounded-lg border border-border px-3 py-2 text-center text-sm text-muted hover:border-neon/60"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  Social
+                </Link>
               </div>
             </div>
           )}
@@ -465,6 +521,9 @@ export default function RevivePassPortal() {
                   <Button size="lg" variant="outline" onClick={() => openTab("checklist")}>
                     Migration Guide
                   </Button>
+                  <Button size="lg" variant="ghost" asChild>
+                    <Link href="/social">Open Social Layer</Link>
+                  </Button>
                 </div>
               </div>
             </Card>
@@ -488,8 +547,8 @@ export default function RevivePassPortal() {
                   size="default"
                   className="text-xs"
                   onClick={() => {
-                    setSlug("community-revival-demo");
-                    setNotice("Demo slug selected: community-revival-demo");
+                    setSlug("loyalty-campaign");
+                    setNotice("Demo slug selected: loyalty-campaign");
                   }}
                 >
                   Use Demo Slug
@@ -597,6 +656,19 @@ export default function RevivePassPortal() {
               <div className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-muted">
                 {wallet || "Connect wallet first"}
               </div>
+              {metadataPreview && (
+                <div className="rounded-xl border border-border bg-background p-3">
+                  <p className="text-xs uppercase tracking-wider text-muted">NFT Metadata (IPFS)</p>
+                  <p className="mt-1 text-sm text-foreground">{metadataPreview.name}</p>
+                  {metadataPreview.image && (
+                    <img
+                      src={metadataPreview.image}
+                      alt={metadataPreview.name}
+                      className="mt-3 h-40 w-full rounded-lg border border-border object-cover"
+                    />
+                  )}
+                </div>
+              )}
               <Button
                 variant="outline"
                 className="w-full"
@@ -639,6 +711,8 @@ export default function RevivePassPortal() {
                   "Claim Revival Pass"
                 )}
               </Button>
+
+              {rewardNotice && <RewardBanner description={rewardNotice} tone="success" />}
 
               {claimResult && (
                 <div className="space-y-2 rounded-xl border border-border bg-background p-3 text-sm">

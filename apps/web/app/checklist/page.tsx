@@ -11,11 +11,15 @@ const checklist = [
   },
   {
     title: "NFT access pass distribution",
-    body: "Use RevivePass claim links so each eligible wallet can mint one authenticated migration pass.",
+    body: "Use RevivePass claim links so each eligible wallet can mint one authenticated migration pass and receive rewards.",
   },
   {
     title: "Community revival dashboard",
-    body: "Track conversion progress and claim momentum with migration analytics and claim history.",
+    body: "Track conversion progress, reward completion, and social activity with migration analytics.",
+  },
+  {
+    title: "Torque and Tapestry activation",
+    body: "Award loyalty points through Torque and publish migration announcements through Tapestry Social.",
   },
 ];
 

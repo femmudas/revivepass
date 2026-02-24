@@ -9,6 +9,9 @@ import { apiRequest } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useReward } from "@/hooks/use-reward";
+import { socialApi } from "@/lib/social";
+import { RewardBanner } from "@/components/reward-banner";
 
 type Eligibility = {
   eligible: boolean;
@@ -23,18 +26,29 @@ type Eligibility = {
   } | null;
 };
 
+type MetadataResponse = {
+  metadataUri: string;
+  name: string;
+  symbol: string;
+  description: string;
+  image: string | null;
+};
+
 export default function ClaimPage() {
   const { slug } = useParams<{ slug: string }>();
   const { publicKey, signMessage } = useWallet();
+  const { awarding, awardMigrationReward } = useReward();
 
   const [eligibility, setEligibility] = useState<Eligibility | null>(null);
   const [status, setStatus] = useState<string>("Connect your wallet to begin.");
   const [loading, setLoading] = useState(false);
   const [explorer, setExplorer] = useState<string | null>(null);
+  const [rewardStatus, setRewardStatus] = useState("");
+  const [metadataPreview, setMetadataPreview] = useState<MetadataResponse | null>(null);
 
   const wallet = useMemo(() => publicKey?.toBase58(), [publicKey]);
   const alreadyClaimed = Boolean(eligibility?.alreadyClaimed || eligibility?.already_claimed);
-  const canClaim = Boolean(wallet && eligibility?.eligible && !alreadyClaimed && !loading);
+  const canClaim = Boolean(wallet && eligibility?.eligible && !alreadyClaimed && !loading && !awarding);
 
   useEffect(() => {
     if (!wallet) {
@@ -60,6 +74,12 @@ export default function ClaimPage() {
       .catch((e) => setStatus((e as Error).message))
       .finally(() => setLoading(false));
   }, [wallet, slug]);
+
+  useEffect(() => {
+    apiRequest<MetadataResponse>(`/migrations/${slug}/metadata`)
+      .then(setMetadataPreview)
+      .catch(() => setMetadataPreview(null));
+  }, [slug]);
 
   const claim = async () => {
     if (!wallet || !signMessage) {
@@ -100,6 +120,22 @@ export default function ClaimPage() {
           : "Revival Pass minted successfully."
       );
       setExplorer(claimRes.explorer);
+
+      const rewardResult = await awardMigrationReward({
+        walletAddress: wallet,
+        migrationSlug: slug,
+      });
+
+      let socialMessage = "Tapestry post skipped.";
+      try {
+        const profile = await socialApi.createOrGetProfile(wallet);
+        await socialApi.postMigration(profile.profile.id, slug);
+        socialMessage = "Tapestry announcement posted.";
+      } catch (socialError) {
+        socialMessage = `Tapestry post failed: ${(socialError as Error).message}`;
+      }
+
+      setRewardStatus(`${rewardResult.message} ${socialMessage}`);
     } catch (e) {
       setStatus((e as Error).message);
     } finally {
@@ -114,6 +150,19 @@ export default function ClaimPage() {
         <CardTitle>Migration: {slug}</CardTitle>
         <CardDescription>Connect your wallet and claim your Revival Pass NFT.</CardDescription>
         <WalletMultiButton className="!bg-accent !text-background" />
+        {metadataPreview && (
+          <div className="rounded-xl border border-border bg-background p-3">
+            <p className="text-xs uppercase tracking-wider text-muted">NFT Metadata (IPFS)</p>
+            <p className="mt-1 text-sm text-foreground">{metadataPreview.name}</p>
+            {metadataPreview.image && (
+              <img
+                src={metadataPreview.image}
+                alt={metadataPreview.name}
+                className="mt-3 h-40 w-full rounded-lg border border-border object-cover"
+              />
+            )}
+          </div>
+        )}
       </Card>
 
       <Card className="space-y-3">
@@ -134,6 +183,7 @@ export default function ClaimPage() {
           {loading ? "Processing..." : alreadyClaimed ? "Already Claimed" : "Claim Revival Pass"}
         </Button>
         <p className="text-sm text-foreground/75">{status}</p>
+        {rewardStatus && <RewardBanner description={rewardStatus} tone="success" />}
         {explorer && (
           <a href={explorer} target="_blank" rel="noreferrer" className="text-sm text-accent underline">
             View transaction on Solana Explorer

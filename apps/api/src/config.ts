@@ -14,7 +14,17 @@ const schema = z.object({
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
       ])
     ),
-  PASS_IMAGE_URL: z.string().url().default("https://example.com/revivepass.png"),
+  METADATA_URI: z
+    .string()
+    .url()
+    .default(
+      "https://gateway.pinata.cloud/ipfs/bafybeidxodle6nc54u6igkez7tuve24utvtbhmldxal5ewbsmpuaskkj4u"
+    ),
+  TORQUE_API_URL: z.string().url().default("https://api.torque.so"),
+  TORQUE_RPC_URL: z.string().url().default("https://api.devnet.solana.com"),
+  TORQUE_AUTH_DOMAIN: z.string().min(1).default("revivepass.local"),
+  TAPESTRY_API_URL: z.string().url().default("https://api.usetapestry.dev"),
+  TAPESTRY_API_KEY: z.string().default(""),
   DB_PATH: z.string().min(1).default("./data/revivepass.sqlite"),
   PORT: z.coerce.number().default(4000),
 });

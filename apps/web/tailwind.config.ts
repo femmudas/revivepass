@@ -10,16 +10,22 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: "#070A13",
-        foreground: "#EAF2FF",
-        panel: "#0B1224",
-        neon: "#2EF2B8",
-        accent: "#35B5FF",
-        danger: "#FF5A8A",
-        border: "#1F2B45"
+        background: "#070A0D",
+        foreground: "#E6FFF4",
+        card: "#0B0F14",
+        panel: "#0B0F14",
+        navbar: "#0A0E13",
+        neon: "#00FF88",
+        neonHover: "#00CC6E",
+        muted: "#9FD9C0",
+        accent: "#9FD9C0",
+        border: "rgba(0,255,136,0.25)",
+        focus: "rgba(0,255,136,0.55)",
+        danger: "#ff6b6b"
       },
       boxShadow: {
-        neon: "0 0 30px rgba(46,242,184,0.18)"
+        neon: "0 10px 40px rgba(0,255,136,0.25)",
+        card: "0 8px 30px rgba(0,0,0,0.35)"
       }
     }
   },

@@ -6,16 +6,20 @@ import { Slot } from "@radix-ui/react-slot";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center rounded-md text-sm font-semibold transition-colors disabled:opacity-50 disabled:pointer-events-none",
+  "inline-flex items-center justify-center rounded-xl text-sm font-semibold transition-all duration-200 disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
-        default: "bg-neon text-background hover:bg-[#7AFAD6]",
-        outline: "border border-border text-foreground hover:bg-panel",
+        default:
+          "bg-gradient-to-b from-neon to-neonHover text-background shadow-neon hover:brightness-105 active:scale-[0.98]",
+        outline:
+          "border border-border bg-transparent text-foreground hover:bg-neon/10 hover:text-neon active:scale-[0.98]",
+        ghost: "bg-transparent text-muted hover:bg-neon/10 hover:text-foreground",
       },
       size: {
         default: "h-10 px-4",
         lg: "h-11 px-6",
+        icon: "h-10 w-10",
       },
     },
     defaultVariants: {

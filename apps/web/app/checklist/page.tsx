@@ -1,4 +1,3 @@
-import { Badge } from "@/components/ui/badge";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 
 const checklist = [
@@ -23,7 +22,6 @@ const checklist = [
 export default function ChecklistPage() {
   return (
     <div className="space-y-5 py-6">
-      <Badge>Migration Checklist</Badge>
       <h1 className="text-3xl font-bold">Migration Checklist</h1>
       <p className="max-w-2xl text-foreground/75">
         Follow this sequence to move your community onto Solana with confidence and verifiable participation.
@@ -38,12 +36,6 @@ export default function ChecklistPage() {
         ))}
       </div>
 
-      <Card className="space-y-2">
-        <CardTitle>Optional Alignment</CardTitle>
-        <CardDescription>
-          Sunrise alignment: This flow matches Sunrise-style onboarding.
-        </CardDescription>
-      </Card>
     </div>
   );
 }

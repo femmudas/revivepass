@@ -4,4 +4,8 @@ node_modules
 dist
 coverage
 *.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.api-run*.log
+.web-*.log
 .DS_Store

@@ -16,6 +16,7 @@ const buildUrl = (path: string) => {
 };
 
 export const apiRequest = async <T>(path: string, options: RequestOptions = {}): Promise<T> => {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const headers: Record<string, string> = {};
   if (options.headers) {
     const normalized = new Headers(options.headers);
@@ -40,7 +41,7 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
     body = JSON.stringify(options.body);
   }
 
-  const url = buildUrl(path);
+  const url = buildUrl(normalizedPath);
   const response = await fetch(url, {
     method: options.method ?? "GET",
     headers,
@@ -80,13 +81,20 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
       pickMessage(payload.error) ??
       `Request failed (${response.status})`;
 
-    if (
-      !API_BASE &&
-      response.status === 404 &&
-      path.startsWith("/api/")
-    ) {
+    const isBackendEndpoint =
+      normalizedPath.startsWith("/migrations") ||
+      normalizedPath.startsWith("/auth/") ||
+      normalizedPath.startsWith("/admin/auth") ||
+      normalizedPath.startsWith("/api/social");
+
+    if (response.status === 404 && isBackendEndpoint) {
+      if (!API_BASE) {
+        throw new Error(
+          "Backend API is not configured. Set NEXT_PUBLIC_API_URL to your Railway API service domain."
+        );
+      }
       throw new Error(
-        "API route not found on this domain. Set NEXT_PUBLIC_API_URL to your Railway API service URL."
+        `API endpoint not found at ${url}. Verify NEXT_PUBLIC_API_URL points to the API service (not the web service).`
       );
     }
 

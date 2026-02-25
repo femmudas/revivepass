@@ -40,7 +40,8 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
     body = JSON.stringify(options.body);
   }
 
-  const response = await fetch(buildUrl(path), {
+  const url = buildUrl(path);
+  const response = await fetch(url, {
     method: options.method ?? "GET",
     headers,
     body,
@@ -78,6 +79,17 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
       pickMessage(payload.message) ??
       pickMessage(payload.error) ??
       `Request failed (${response.status})`;
+
+    if (
+      !API_BASE &&
+      response.status === 404 &&
+      path.startsWith("/api/")
+    ) {
+      throw new Error(
+        "API route not found on this domain. Set NEXT_PUBLIC_API_URL to your Railway API service URL."
+      );
+    }
+
     throw new Error(message);
   }
 

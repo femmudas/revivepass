@@ -263,11 +263,6 @@ export default function RevivePassPortal() {
   };
 
   const createMigration = async () => {
-    if (typeof window !== "undefined" && !window.localStorage.getItem("revivepass_admin_token")) {
-      setError("Admin login required. Open /admin/login first.");
-      return;
-    }
-
     if (!form.title.trim()) {
       setError("Migration title is required.");
       return;
@@ -286,7 +281,6 @@ export default function RevivePassPortal() {
     try {
       const res = await apiRequest<{ migration: MigrationResponse["migration"] }>("/migrations", {
         method: "POST",
-        adminAuth: true,
         body: {
           name: form.title.trim(),
           slug: `${slugify(form.title) || "community-revival"}-${uid()}`,
@@ -314,11 +308,6 @@ export default function RevivePassPortal() {
   };
 
   const uploadSnapshot = async () => {
-    if (typeof window !== "undefined" && !window.localStorage.getItem("revivepass_admin_token")) {
-      setError("Admin login required. Open /admin/login first.");
-      return;
-    }
-
     if (!created) return;
     if (!csvFile && manualAddressLines.length === 0) {
       setError("Provide a CSV file or add manual wallet addresses.");
@@ -337,7 +326,6 @@ export default function RevivePassPortal() {
       }
       const res = await apiRequest<SnapshotUploadResponse>(`/migrations/${created.slug}/snapshot`, {
         method: "POST",
-        adminAuth: true,
         formData: fd,
       });
       setUploadInserted(res.inserted ?? null);
@@ -445,11 +433,6 @@ export default function RevivePassPortal() {
   };
 
   const updateMigrationStatus = async (status: "open" | "closed") => {
-    if (typeof window !== "undefined" && !window.localStorage.getItem("revivepass_admin_token")) {
-      setError("Admin login required. Open /admin/login first.");
-      return;
-    }
-
     if (!created) return;
     setError("");
     try {
@@ -457,7 +440,6 @@ export default function RevivePassPortal() {
         `/migrations/${created.slug}/status`,
         {
           method: "POST",
-          adminAuth: true,
           body: { status },
         }
       );

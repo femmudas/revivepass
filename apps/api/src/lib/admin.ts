@@ -21,7 +21,10 @@ const adminWalletSet = new Set(
     .map((entry) => entry.toLowerCase())
 );
 
+export const isAdminAuthEnabled = () => adminWalletSet.size > 0;
+
 export const isAdminWallet = (wallet: string) => {
+  if (!isAdminAuthEnabled()) return false;
   const normalized = normalizeWallet(wallet);
   if (!normalized) return false;
   return adminWalletSet.has(normalized.toLowerCase());
@@ -81,6 +84,14 @@ export const revokeAdminSession = (token: string) => {
 };
 
 export const requireAdmin = (request: FastifyRequest, reply: FastifyReply) => {
+  if (!isAdminAuthEnabled()) {
+    return {
+      wallet: "public-access",
+      token: "admin-auth-disabled",
+      expiresAt: "never",
+    };
+  }
+
   const session = getAdminSession(request);
   if (!session) {
     reply.status(401).send({ error: "Admin authentication required" });
@@ -88,4 +99,3 @@ export const requireAdmin = (request: FastifyRequest, reply: FastifyReply) => {
   }
   return session;
 };
-

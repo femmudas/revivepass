@@ -6,6 +6,8 @@ type RequestOptions = {
   method?: "GET" | "POST";
   body?: unknown;
   formData?: FormData;
+  headers?: HeadersInit;
+  adminAuth?: boolean;
 };
 
 const buildUrl = (path: string) => {
@@ -14,7 +16,21 @@ const buildUrl = (path: string) => {
 };
 
 export const apiRequest = async <T>(path: string, options: RequestOptions = {}): Promise<T> => {
-  const headers: HeadersInit = {};
+  const headers: Record<string, string> = {};
+  if (options.headers) {
+    const normalized = new Headers(options.headers);
+    normalized.forEach((value, key) => {
+      headers[key] = value;
+    });
+  }
+
+  if (options.adminAuth && typeof window !== "undefined") {
+    const token = window.localStorage.getItem("revivepass_admin_token");
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  }
+
   let body: BodyInit | undefined;
 
   if (options.formData) {

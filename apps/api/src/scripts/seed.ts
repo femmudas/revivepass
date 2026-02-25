@@ -11,12 +11,14 @@ const campaigns = [
     name: "Community Revival Demo",
     description: "Demo migration campaign for testing claim and dashboard flow.",
     symbol: "REVIVE",
+    status: "open" as const,
   },
   {
     slug: "social-campaign",
     name: "Migration Social Share",
     description: "Share your migration journey via Tapestry and connect with others.",
     symbol: "SOCIAL",
+    status: "open" as const,
   },
 ];
 
@@ -32,18 +34,18 @@ const ensureMigration = (campaign: (typeof campaigns)[number]) => {
   if (existing) {
     db.prepare(
       `UPDATE migrations
-       SET name = ?, description = ?, symbol = ?
+       SET name = ?, description = ?, symbol = ?, status = ?
        WHERE id = ?`
-    ).run(campaign.name, campaign.description, campaign.symbol, existing.id);
+    ).run(campaign.name, campaign.description, campaign.symbol, campaign.status, existing.id);
     return existing.id;
   }
 
   const created = db
     .prepare(
-      `INSERT INTO migrations(name, slug, description, symbol)
-       VALUES (?, ?, ?, ?)`
+      `INSERT INTO migrations(name, slug, description, symbol, status)
+       VALUES (?, ?, ?, ?, ?)`
     )
-    .run(campaign.name, campaign.slug, campaign.description, campaign.symbol);
+    .run(campaign.name, campaign.slug, campaign.description, campaign.symbol, campaign.status);
 
   return Number(created.lastInsertRowid);
 };

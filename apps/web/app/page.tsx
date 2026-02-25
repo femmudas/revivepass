@@ -18,7 +18,13 @@ import { socialApi } from "@/lib/social";
 type Tab = "home" | "create" | "claim" | "dashboard" | "checklist";
 
 type MigrationResponse = {
-  migration: { name: string; slug: string; description: string; symbol: string };
+  migration: {
+    name: string;
+    slug: string;
+    description: string;
+    symbol: string;
+    status: "draft" | "open" | "closed";
+  };
   claimed: number;
   remaining: number;
 };
@@ -30,8 +36,25 @@ type StatsResponse = {
   claimHistory: { date: string; value: number }[];
 };
 
+type SnapshotUploadResponse = {
+  inserted: number;
+  csvProvided?: number;
+  csvAProvided?: number;
+  csvBProvided?: number;
+  matched?: number;
+  unmatchedA?: number;
+  unmatchedB?: number;
+  manualProvided?: number;
+  manualInserted?: number;
+  duplicatesIgnored?: number;
+  invalid?: number;
+  invalidEntries?: string[];
+};
+
 type EligibilityResponse = {
   eligible: boolean;
+  claimOpen?: boolean;
+  migrationStatus?: "draft" | "open" | "closed";
   alreadyClaimed?: boolean;
   already_claimed?: boolean;
   existingClaim: { txSignature: string; mintAddress: string; explorer: string } | null;
@@ -141,10 +164,11 @@ function WalletControl() {
 export default function RevivePassPortal() {
   const { publicKey, signMessage } = useWallet();
   const wallet = useMemo(() => publicKey?.toBase58() ?? "", [publicKey]);
+  const csvInputRef = useRef<HTMLInputElement | null>(null);
 
   const [tab, setTab] = useState<Tab>("home");
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [slug, setSlug] = useState("social-campaign");
+  const [slug, setSlug] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [metadataPreview, setMetadataPreview] = useState<MetadataResponse | null>(null);
@@ -157,15 +181,23 @@ export default function RevivePassPortal() {
     nftSymbol: "REVIVE",
     nftDescription: "Claim your Revival Pass to join the Solana community.",
   });
-  const [created, setCreated] = useState<{ slug: string; title: string; symbol: string } | null>(null);
+  const [created, setCreated] = useState<{
+    slug: string;
+    title: string;
+    symbol: string;
+    status: "draft" | "open" | "closed";
+  } | null>(null);
   const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [manualAddressesInput, setManualAddressesInput] = useState("");
   const [uploadInserted, setUploadInserted] = useState<number | null>(null);
+  const [uploadSummary, setUploadSummary] = useState<SnapshotUploadResponse | null>(null);
   const [createLoading, setCreateLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
 
   const [eligibilityState, setEligibilityState] = useState<
     "idle" | "checking" | "eligible" | "ineligible" | "already" | "minting" | "done"
   >("idle");
+  const [claimOpen, setClaimOpen] = useState(false);
   const [claimResult, setClaimResult] = useState<{ tx: string; mint: string; explorer: string } | null>(null);
 
   const [dashboardLoading, setDashboardLoading] = useState(false);
@@ -178,46 +210,16 @@ export default function RevivePassPortal() {
     history: { date: string; count: number }[];
   } | null>(null);
 
+  const buildClaimUrl = (migrationSlug: string) =>
+    `${typeof window !== "undefined" ? window.location.origin : ""}/claim/${migrationSlug}`;
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const p = params.get("page");
     const s = params.get("slug");
     if (p === "home" || p === "create" || p === "claim" || p === "dashboard" || p === "checklist") setTab(p);
     if (s) setSlug(s);
-    void ensureDemoSlug(s ?? undefined);
   }, []);
-
-  const ensureDemoSlug = async (preferred?: string) => {
-    const candidates = [preferred, "social-campaign", "community-revival-demo"].filter(Boolean) as string[];
-    for (const candidate of candidates) {
-      try {
-        await apiRequest<MigrationResponse>(`/migrations/${candidate}`);
-        setSlug(candidate);
-        if (candidate === "social-campaign" || candidate === "community-revival-demo") {
-          setNotice(`Demo slug ready: ${candidate}`);
-        }
-        return;
-      } catch {
-        // try next candidate
-      }
-    }
-
-    try {
-      const createdDemo = await apiRequest<{ migration: MigrationResponse["migration"] }>("/migrations", {
-        method: "POST",
-        body: {
-          name: "Migration Social Share",
-          slug: "social-campaign",
-          description: "Share your migration journey via Tapestry and connect with others.",
-          symbol: "SOCIAL",
-        },
-      });
-      setSlug(createdDemo.migration.slug);
-      setNotice(`Demo slug created: ${createdDemo.migration.slug}`);
-    } catch {
-      setNotice("Create a migration to start your claim and dashboard flow.");
-    }
-  };
 
   useEffect(() => {
     if (!slug.trim()) {
@@ -229,6 +231,15 @@ export default function RevivePassPortal() {
       .then((data) => setMetadataPreview(data))
       .catch(() => setMetadataPreview(null));
   }, [slug]);
+
+  const manualAddressLines = useMemo(
+    () =>
+      manualAddressesInput
+        .split(/\r?\n/)
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    [manualAddressesInput]
+  );
 
   const openTab = (next: Tab) => {
     setTab(next);
@@ -252,6 +263,11 @@ export default function RevivePassPortal() {
   };
 
   const createMigration = async () => {
+    if (typeof window !== "undefined" && !window.localStorage.getItem("revivepass_admin_token")) {
+      setError("Admin login required. Open /admin/login first.");
+      return;
+    }
+
     if (!form.title.trim()) {
       setError("Migration title is required.");
       return;
@@ -270,6 +286,7 @@ export default function RevivePassPortal() {
     try {
       const res = await apiRequest<{ migration: MigrationResponse["migration"] }>("/migrations", {
         method: "POST",
+        adminAuth: true,
         body: {
           name: form.title.trim(),
           slug: `${slugify(form.title) || "community-revival"}-${uid()}`,
@@ -281,8 +298,14 @@ export default function RevivePassPortal() {
         slug: res.migration.slug,
         title: res.migration.name,
         symbol: res.migration.symbol,
+        status: res.migration.status,
       });
       setSlug(res.migration.slug);
+      setUploadInserted(null);
+      setUploadSummary(null);
+      setCsvFile(null);
+      setManualAddressesInput("");
+      setClaimOpen(false);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -291,17 +314,34 @@ export default function RevivePassPortal() {
   };
 
   const uploadSnapshot = async () => {
-    if (!created || !csvFile) return;
+    if (typeof window !== "undefined" && !window.localStorage.getItem("revivepass_admin_token")) {
+      setError("Admin login required. Open /admin/login first.");
+      return;
+    }
+
+    if (!created) return;
+    if (!csvFile && manualAddressLines.length === 0) {
+      setError("Provide a CSV file or add manual wallet addresses.");
+      return;
+    }
     setError("");
     setUploadLoading(true);
+    setUploadSummary(null);
     try {
       const fd = new FormData();
-      fd.append("file", csvFile);
-      const res = await apiRequest<{ inserted: number }>(`/migrations/${created.slug}/snapshot`, {
+      if (csvFile) {
+        fd.append("file", csvFile);
+      }
+      if (manualAddressesInput.trim()) {
+        fd.append("manualAddresses", manualAddressesInput);
+      }
+      const res = await apiRequest<SnapshotUploadResponse>(`/migrations/${created.slug}/snapshot`, {
         method: "POST",
+        adminAuth: true,
         formData: fd,
       });
       setUploadInserted(res.inserted ?? null);
+      setUploadSummary(res);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -319,9 +359,12 @@ export default function RevivePassPortal() {
       return;
     }
     setEligibilityState("checking");
+    setClaimOpen(false);
+    setClaimResult(null);
     setError("");
     try {
       const res = await apiRequest<EligibilityResponse>(`/migrations/${slug}/eligibility?wallet=${wallet}`);
+      setClaimOpen(Boolean(res.claimOpen));
       const already = Boolean(res.alreadyClaimed || res.already_claimed);
       if (already && res.existingClaim) {
         setClaimResult({
@@ -332,18 +375,30 @@ export default function RevivePassPortal() {
         setEligibilityState("already");
       } else if (res.eligible) {
         setEligibilityState("eligible");
+        if (!res.claimOpen) {
+          setNotice("Claim portal is not open yet.");
+        }
       } else {
         setEligibilityState("ineligible");
       }
     } catch (e) {
       setError((e as Error).message);
       setEligibilityState("idle");
+      setClaimOpen(false);
     }
   };
 
   const claim = async () => {
     if (!slug || !wallet || !signMessage) {
       setError("Slug, wallet connection, and message signing are required.");
+      return;
+    }
+    if (eligibilityState !== "eligible") {
+      setError("Check eligibility first. Claim is only available for eligible wallets.");
+      return;
+    }
+    if (!claimOpen) {
+      setError("Claim portal is not open for this migration.");
       return;
     }
     setEligibilityState("minting");
@@ -376,8 +431,47 @@ export default function RevivePassPortal() {
       setNotice(socialMessage);
       setEligibilityState("done");
     } catch (e) {
+      const message = (e as Error).message;
+      setError(message);
+      const normalized = message.toLowerCase();
+      if (normalized.includes("not in snapshot")) {
+        setEligibilityState("ineligible");
+      } else if (normalized.includes("already")) {
+        setEligibilityState("already");
+      } else {
+        setEligibilityState("eligible");
+      }
+    }
+  };
+
+  const updateMigrationStatus = async (status: "open" | "closed") => {
+    if (typeof window !== "undefined" && !window.localStorage.getItem("revivepass_admin_token")) {
+      setError("Admin login required. Open /admin/login first.");
+      return;
+    }
+
+    if (!created) return;
+    setError("");
+    try {
+      const res = await apiRequest<{ migration: MigrationResponse["migration"] }>(
+        `/migrations/${created.slug}/status`,
+        {
+          method: "POST",
+          adminAuth: true,
+          body: { status },
+        }
+      );
+      setCreated((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: res.migration.status,
+            }
+          : prev
+      );
+      setNotice(`Migration status updated: ${res.migration.status}`);
+    } catch (e) {
       setError((e as Error).message);
-      setEligibilityState("eligible");
     }
   };
 
@@ -409,7 +503,8 @@ export default function RevivePassPortal() {
     }
   };
 
-  const canClaim = eligibilityState === "eligible" && Boolean(wallet) && Boolean(signMessage);
+  const canClaim =
+    eligibilityState === "eligible" && claimOpen && Boolean(wallet) && Boolean(signMessage);
 
   return (
     <div className="min-h-screen text-foreground">
@@ -531,19 +626,6 @@ export default function RevivePassPortal() {
                   Go
                 </Button>
               </div>
-              <div>
-                <Button
-                  variant="ghost"
-                  size="default"
-                  className="text-xs"
-                  onClick={() => {
-                    setSlug("social-campaign");
-                    setNotice("Demo slug selected: social-campaign");
-                  }}
-                >
-                  Use Demo Slug
-                </Button>
-              </div>
             </Card>
           </motion.div>
         )}
@@ -597,18 +679,49 @@ export default function RevivePassPortal() {
                 </p>
                 <div className="rounded-xl border border-border bg-background p-3">
                   <input
+                    ref={csvInputRef}
                     type="file"
                     accept=".csv"
                     onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)}
-                    className="block w-full text-sm text-muted file:mr-4 file:rounded-lg file:border-0 file:bg-neon file:px-4 file:py-2 file:text-sm file:font-semibold file:text-background hover:file:bg-neonHover"
+                    className="hidden"
                   />
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => csvInputRef.current?.click()}
+                    >
+                      Choose file
+                    </Button>
+                    <p className="text-sm text-muted">
+                      {csvFile ? csvFile.name : "No file chosen"}
+                    </p>
+                  </div>
                   {csvFile && (
                     <p className="mt-2 text-xs text-muted">
-                      Selected: {csvFile.name} ({Math.ceil(csvFile.size / 1024)} KB)
+                      Size: {Math.ceil(csvFile.size / 1024)} KB
                     </p>
                   )}
                 </div>
-                <Button className="w-full" disabled={!csvFile || uploadLoading} onClick={uploadSnapshot}>
+                <div className="space-y-2 rounded-xl border border-border bg-background p-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">
+                    Manual Wallet Addresses (Optional)
+                  </p>
+                  <textarea
+                    value={manualAddressesInput}
+                    onChange={(e) => setManualAddressesInput(e.target.value)}
+                    placeholder="Paste one Solana wallet address per line"
+                    className="min-h-28 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition placeholder:text-muted/70 focus:border-neon focus:ring-2 focus:ring-focus"
+                  />
+                  <p className="text-xs text-muted">
+                    {manualAddressLines.length} manual address{manualAddressLines.length === 1 ? "" : "es"} ready
+                  </p>
+                </div>
+                <Button
+                  className="w-full"
+                  disabled={uploadLoading || (!csvFile && manualAddressLines.length === 0)}
+                  onClick={uploadSnapshot}
+                >
                   {uploadLoading ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Uploading...
@@ -622,10 +735,92 @@ export default function RevivePassPortal() {
                     Inserted: {uploadInserted}
                   </div>
                 )}
+                {uploadSummary && (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-muted">
+                      CSV rows: {uploadSummary.csvProvided ?? "-"}
+                    </div>
+                    <div className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-muted">
+                      CSV A rows: {uploadSummary.csvAProvided ?? "-"}
+                    </div>
+                    <div className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-muted">
+                      CSV B rows: {uploadSummary.csvBProvided ?? "-"}
+                    </div>
+                    <div className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-muted">
+                      Matched (A+B): {uploadSummary.matched ?? "-"}
+                    </div>
+                    <div className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-muted">
+                      Manual submitted: {uploadSummary.manualProvided ?? "-"}
+                    </div>
+                    <div className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-muted">
+                      Manual inserted: {uploadSummary.manualInserted ?? "-"}
+                    </div>
+                    <div className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-muted">
+                      Unmatched A: {uploadSummary.unmatchedA ?? 0}
+                    </div>
+                    <div className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-muted">
+                      Unmatched B: {uploadSummary.unmatchedB ?? 0}
+                    </div>
+                    <div className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-muted">
+                      Duplicates ignored: {uploadSummary.duplicatesIgnored ?? 0}
+                    </div>
+                    <div className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-muted sm:col-span-2">
+                      Invalid addresses: {uploadSummary.invalid ?? 0}
+                      {(uploadSummary.invalidEntries?.length ?? 0) > 0 && (
+                        <span className="ml-2 text-xs text-danger">
+                          ({uploadSummary.invalidEntries?.slice(0, 3).join(", ")}
+                          {(uploadSummary.invalidEntries?.length ?? 0) > 3 ? ", ..." : ""})
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <div className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-muted">
+                  Snapshot status: <span className="font-semibold uppercase text-foreground">{created.status}</span>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Button
+                    onClick={() => updateMigrationStatus("open")}
+                    disabled={created.status !== "draft" || !uploadSummary}
+                  >
+                    Open Claims
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => updateMigrationStatus("closed")}
+                    disabled={created.status !== "open"}
+                  >
+                    Close Claims
+                  </Button>
+                </div>
                 <div className="space-y-1">
                   <p className="text-xs uppercase tracking-wider text-muted">Claim Link</p>
                   <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-neon">
-                    {`${typeof window !== "undefined" ? window.location.origin : ""}/claim/${created.slug}`}
+                    {buildClaimUrl(created.slug)}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(buildClaimUrl(created.slug));
+                        setNotice("Claim link copied.");
+                      }}
+                    >
+                      Copy Link
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        setSlug(created.slug);
+                        setEligibilityState("idle");
+                        setClaimOpen(false);
+                        setClaimResult(null);
+                        openTab("claim");
+                      }}
+                    >
+                      Open Claim Page
+                    </Button>
                   </div>
                 </div>
               </Card>
@@ -639,7 +834,12 @@ export default function RevivePassPortal() {
               <h2 className="text-3xl font-bold tracking-tight">Claim Revival Pass</h2>
               <Input
                 value={slug}
-                onChange={(e) => setSlug(e.target.value)}
+                onChange={(e) => {
+                  setSlug(e.target.value);
+                  setEligibilityState("idle");
+                  setClaimOpen(false);
+                  setClaimResult(null);
+                }}
                 className="font-mono"
                 placeholder="Migration slug"
               />
@@ -691,12 +891,25 @@ export default function RevivePassPortal() {
                   Already claimed.
                 </div>
               )}
+              {eligibilityState === "eligible" && !claimOpen && (
+                <div className="rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+                  Claim portal is not open yet.
+                </div>
+              )}
 
               <Button className="w-full" onClick={claim} disabled={!canClaim}>
                 {eligibilityState === "minting" ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Minting...
                   </>
+                ) : eligibilityState === "ineligible" ? (
+                  "Claim Unavailable"
+                ) : eligibilityState === "eligible" && !claimOpen ? (
+                  "Claim Closed"
+                ) : eligibilityState === "already" ? (
+                  "Already Claimed"
+                ) : eligibilityState === "done" ? (
+                  "Claim Completed"
                 ) : (
                   "Claim Revival Pass"
                 )}

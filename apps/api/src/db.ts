@@ -11,6 +11,19 @@ if (dbDir && dbDir !== ".") {
 export const db = new Database(env.DB_PATH);
 db.pragma("journal_mode = WAL");
 
+const hasColumn = (tableName: string, columnName: string) => {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as {
+    name: string;
+  }[];
+  return columns.some((column) => column.name === columnName);
+};
+
+const ensureColumn = (tableName: string, columnName: string, columnSql: string) => {
+  if (!hasColumn(tableName, columnName)) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnSql}`);
+  }
+};
+
 export const runMigrations = () => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS migrations (
@@ -19,6 +32,7 @@ export const runMigrations = () => {
       slug TEXT NOT NULL UNIQUE,
       description TEXT NOT NULL,
       symbol TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       total_snapshot_count INTEGER NOT NULL DEFAULT 0
     );
@@ -51,9 +65,19 @@ export const runMigrations = () => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       wallet TEXT NOT NULL,
       nonce TEXT NOT NULL,
+      purpose TEXT NOT NULL DEFAULT 'claim',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       expires_at TEXT NOT NULL,
       used INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet TEXT NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      expires_at TEXT NOT NULL,
+      revoked INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS idx_snapshot_migration_wallet
@@ -62,5 +86,13 @@ export const runMigrations = () => {
       ON claims(migration_id);
     CREATE INDEX IF NOT EXISTS idx_nonce_wallet
       ON auth_nonces(wallet, nonce);
+    CREATE INDEX IF NOT EXISTS idx_admin_sessions_token
+      ON admin_sessions(token);
   `);
+
+  ensureColumn("migrations", "status", "TEXT NOT NULL DEFAULT 'draft'");
+  ensureColumn("auth_nonces", "purpose", "TEXT NOT NULL DEFAULT 'claim'");
+
+  db.prepare(`UPDATE migrations SET status = 'draft' WHERE status IS NULL OR trim(status) = ''`).run();
+  db.prepare(`UPDATE auth_nonces SET purpose = 'claim' WHERE purpose IS NULL OR trim(purpose) = ''`).run();
 };

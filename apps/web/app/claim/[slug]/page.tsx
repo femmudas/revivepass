@@ -13,6 +13,8 @@ import { socialApi } from "@/lib/social";
 
 type Eligibility = {
   eligible: boolean;
+  claimOpen?: boolean;
+  migrationStatus?: "draft" | "open" | "closed";
   amount: number;
   evmAddress: string | null;
   alreadyClaimed: boolean;
@@ -44,7 +46,8 @@ export default function ClaimPage() {
 
   const wallet = useMemo(() => publicKey?.toBase58(), [publicKey]);
   const alreadyClaimed = Boolean(eligibility?.alreadyClaimed || eligibility?.already_claimed);
-  const canClaim = Boolean(wallet && eligibility?.eligible && !alreadyClaimed && !loading);
+  const claimOpen = Boolean(eligibility?.claimOpen);
+  const canClaim = Boolean(wallet && eligibility?.eligible && claimOpen && !alreadyClaimed && !loading);
 
   useEffect(() => {
     if (!wallet) {
@@ -60,6 +63,8 @@ export default function ClaimPage() {
         const claimedFlag = Boolean(data.alreadyClaimed || data.already_claimed);
         if (!data.eligible) {
           setStatus("This wallet is not in the snapshot.");
+        } else if (!data.claimOpen) {
+          setStatus("Claim portal is not open for this migration.");
         } else if (claimedFlag && data.existingClaim) {
           setStatus("Already claimed.");
           setExplorer(data.existingClaim.explorer);
@@ -80,6 +85,11 @@ export default function ClaimPage() {
   const claim = async () => {
     if (!wallet || !signMessage) {
       setStatus("Wallet does not support message signing.");
+      return;
+    }
+
+    if (!claimOpen) {
+      setStatus("Claim portal is not open for this migration.");
       return;
     }
 
@@ -162,6 +172,8 @@ export default function ClaimPage() {
         {!loading && eligibility && (
           <div className="space-y-2 text-sm text-foreground/80">
             <p>Eligible: {eligibility.eligible ? "Yes" : "No"}</p>
+            <p>Claim open: {eligibility.claimOpen ? "Yes" : "No"}</p>
+            <p>Status: {eligibility.migrationStatus ?? "-"}</p>
             <p>Snapshot amount: {eligibility.amount}</p>
             <p>EVM address: {eligibility.evmAddress ?? "-"}</p>
           </div>
@@ -171,7 +183,13 @@ export default function ClaimPage() {
           disabled={!canClaim}
           className="w-full"
         >
-          {loading ? "Processing..." : alreadyClaimed ? "Already Claimed" : "Claim Revival Pass"}
+          {loading
+            ? "Processing..."
+            : alreadyClaimed
+              ? "Already Claimed"
+              : !claimOpen
+                ? "Claim Closed"
+                : "Claim Revival Pass"}
         </Button>
         <p className="text-sm text-foreground/75">{status}</p>
         {explorer && (

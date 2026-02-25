@@ -1,74 +1,88 @@
 # RevivePass
 
-RevivePass is a Solana migration portal for moving legacy-chain communities using snapshot-based eligibility, one-time NFT claims, and social activation through Tapestry.
+RevivePass is a Solana migration portal for legacy-chain communities.  
+It manages eligibility with snapshots, enforces one-time NFT claims, and includes a social layer powered by Tapestry.
 
-## Project Overview
+## Overview
 
-RevivePass runs migration onboarding as a verifiable flow:
+RevivePass runs two clear personas:
 
-1. Admin creates a migration campaign.
-2. Admin uploads snapshot CSV (`evm_address,solana_wallet,amount`).
-3. Wallets verify eligibility and claim one NFT.
-4. Claim completion can publish an announcement to Tapestry.
-5. Dashboard tracks claimed, remaining, and claim history.
+1. **Admin**
+- Signs in with an allowlisted Solana wallet (`/admin/login`)
+- Creates migration campaigns
+- Uploads whitelist snapshots (combined CSV, CSV A/B merge, and manual addresses)
+- Opens/closes claim windows (`draft -> open -> closed`)
 
-## Problem Statement
+2. **User**
+- Opens a claim link (`/claim/:slug`)
+- Connects wallet
+- Checks eligibility
+- Signs nonce and claims one NFT (idempotent)
 
-Community migrations are often fragmented across spreadsheets and manual checks. RevivePass centralizes eligibility, signed wallet verification, NFT minting, and social sharing in one product flow.
+## Key Features
 
-## Features
-
-- Snapshot CSV validation and ingestion
+- Admin wallet authentication (nonce + signature)
+- Admin route protection for migration and snapshot management
+- Snapshot lifecycle: `draft -> open -> closed`
+- Whitelist import v1:
+  - Combined CSV (`evm_address,solana_wallet,amount`)
+  - CSV A (`evm_address,amount`) + CSV B (`evm_address,solana_wallet`) merge
+  - Manual Solana wallet input merge
+- Duplicate/invalid import reporting
+- Claim guard hardening:
+  - Not eligible => claim disabled
+  - Already claimed => claim disabled
+  - Migration not open => claim disabled
 - One-wallet-per-migration claim enforcement
-- Nonce + signature authentication
-- NFT minting with Metaplex Umi
-- Metadata URI via Pinata IPFS (`METADATA_URI`)
-- Tapestry profile/follow/post/like/comment integration
-- Social feed endpoint and frontend social page
-- Migration dashboard with progress and claim history
-- Seeded campaigns: `community-revival-demo`, `social-campaign`
+- NFT minting via Metaplex Umi
+- Metadata URI from Pinata IPFS (`METADATA_URI`)
+- Tapestry social integration (profiles, follows, posts, likes, comments, trending, search)
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  A[Web App apps/web] -->|Create, Upload, Claim| B[Fastify API apps/api]
-  B --> C[(SQLite)]
-  D[Wallet] -->|Nonce + Signature| B
-  B -->|Mint NFT| E[Solana RPC]
-  E --> F[Metaplex Token Metadata]
-  B -->|Social Proxy| G[Tapestry API]
-  A -->|Social UI| B
+  W[Next.js Web apps/web] -->|API calls| A[Fastify API apps/api]
+  A --> D[(SQLite)]
+  U[User Wallet] -->|nonce + signature| A
+  A -->|Mint NFT| S[Solana RPC + Metaplex]
+  A -->|Social proxy| T[Tapestry API]
 ```
 
 ```mermaid
 sequenceDiagram
-  participant User
+  participant Admin
   participant Web
   participant API
   participant DB
+  participant User
   participant Solana
-  participant Tapestry
 
-  User->>Web: Claim NFT
+  Admin->>Web: /admin/login
+  Web->>API: POST /admin/auth/nonce
+  Web->>API: POST /admin/auth/verify
+  API->>DB: create admin session
+
+  Admin->>Web: Create migration + upload snapshot
+  Web->>API: POST /migrations (admin)
+  Web->>API: POST /migrations/:slug/snapshot (admin)
+  Web->>API: POST /migrations/:slug/status {open}
+
+  User->>Web: /claim/:slug
+  Web->>API: GET /migrations/:slug/eligibility
   Web->>API: POST /auth/nonce
   Web->>API: POST /migrations/:slug/claim
-  API->>DB: Validate eligibility + idempotency
-  API->>Solana: Mint NFT (METADATA_URI)
-  API->>DB: Save claim
-  API-->>Web: txSignature + explorer
-  Web->>API: POST /api/social/post
-  API->>Tapestry: Publish migration announcement
+  API->>DB: enforce idempotency + persist claim
+  API->>Solana: mint NFT
 ```
 
 ## Tech Stack
 
-- Language: TypeScript
-- Frontend: Next.js App Router, TailwindCSS, shadcn-style UI, framer-motion, recharts, Solana wallet adapter
-- Backend: Fastify, SQLite (`better-sqlite3`), zod, csv-parse
-- Solana: `@solana/web3.js`, `@metaplex-foundation/umi`, `@metaplex-foundation/mpl-token-metadata`
-- Social: Tapestry REST API proxy module
-- Deployment: Railway (`apps/web` + `apps/api`)
+- **Language**: TypeScript
+- **Frontend**: Next.js App Router, TailwindCSS, shadcn-style UI primitives, framer-motion, recharts, Solana wallet adapter
+- **Backend**: Fastify, SQLite (`better-sqlite3`), zod, csv-parse
+- **Solana**: `@solana/web3.js`, `@metaplex-foundation/umi`, `@metaplex-foundation/mpl-token-metadata`
+- **Social**: Tapestry REST API proxy
 
 ## Monorepo Structure
 
@@ -84,18 +98,45 @@ revivepass/
   README.md
 ```
 
-## CSV Format
+## Snapshot Input Formats
+
+### Option 1: Combined CSV
 
 ```csv
 evm_address,solana_wallet,amount
 0x1111111111111111111111111111111111111111,8rN25w5ecRjT3hSLM2gFCQ8rLJiVn4A8L9jtrM7G7f1M,1
 ```
 
-Validation rules:
+### Option 2: CSV A + CSV B Merge
 
-- Header must include `evm_address`, `solana_wallet`, `amount`
-- `solana_wallet` is required
-- `amount` must be numeric and `>= 1`
+CSV A:
+
+```csv
+evm_address,amount
+0x1111111111111111111111111111111111111111,100
+```
+
+CSV B:
+
+```csv
+evm_address,solana_wallet
+0x1111111111111111111111111111111111111111,8rN25w5ecRjT3hSLM2gFCQ8rLJiVn4A8L9jtrM7G7f1M
+```
+
+### Manual Wallet Input
+
+- Admin can also paste Solana wallets manually (one per line)
+- Manual entries are merged with CSV results
+
+### Import Report
+
+Upload response includes operational metrics such as:
+
+- inserted
+- matched / unmatchedA / unmatchedB
+- duplicatesIgnored
+- invalid / invalidEntries
+- manualProvided / manualInserted
 
 ## Environment Variables
 
@@ -105,11 +146,13 @@ Copy `.env.example` to `.env` and configure:
 | --- | --- | --- |
 | `SOLANA_RPC_URL` | Solana RPC endpoint for minting | `https://api.devnet.solana.com` |
 | `PRIVATE_KEY` | Mint authority secret key (JSON array) | `[1,2,3,...]` |
-| `METADATA_URI` | Pinata IPFS metadata JSON URL used in mint transaction | `https://gateway.pinata.cloud/ipfs/<cid>` |
+| `METADATA_URI` | Pinata IPFS metadata JSON URL | `https://gateway.pinata.cloud/ipfs/<cid>` |
 | `DB_PATH` | SQLite database path | `./data/revivepass.sqlite` |
 | `NEXT_PUBLIC_API_URL` | Frontend API base URL | `http://localhost:4000` |
 | `TAPESTRY_API_URL` | Tapestry API base URL | `https://api.usetapestry.dev` |
 | `TAPESTRY_API_KEY` | Tapestry API key | `replace-with-tapestry-api-key` |
+| `ADMIN_WALLETS` | Comma-separated admin wallet allowlist | `<wallet1>,<wallet2>` |
+| `ADMIN_SESSION_HOURS` | Admin session TTL in hours | `24` |
 
 ## Local Setup
 
@@ -133,28 +176,43 @@ Local services:
 - Web: `http://localhost:3000`
 - API: `http://localhost:4000`
 
-## Seeded Campaigns
+## Admin Flow
 
-`pnpm seed` creates and snapshots:
-
-- `community-revival-demo` - Community Revival Demo
-- `social-campaign` - Migration Social Share
+1. Open `http://localhost:3000/admin/login`
+2. Connect allowlisted wallet and sign nonce
+3. Open `http://localhost:3000/admin`
+4. Create migration
+5. Upload snapshot (combined CSV, or CSV A/B, optional manual wallets)
+6. Set migration status to `open`
+7. Share claim link `/claim/:slug`
+8. Set status to `closed` when campaign ends
 
 ## API Endpoints
 
-Migration/Auth:
+### Public Claim/Auth
 
-- `POST /migrations`
-- `POST /migrations/:slug/snapshot`
+- `POST /auth/nonce`
+- `POST /auth/verify`
 - `GET /migrations/:slug`
 - `GET /migrations/:slug/metadata`
 - `GET /migrations/:slug/eligibility?wallet=...`
-- `POST /auth/nonce`
-- `POST /auth/verify`
 - `POST /migrations/:slug/claim`
 - `GET /migrations/:slug/stats`
 
-Social proxy:
+### Admin Auth
+
+- `POST /admin/auth/nonce`
+- `POST /admin/auth/verify`
+- `GET /admin/auth/me`
+- `POST /admin/auth/logout`
+
+### Admin Migration Management
+
+- `POST /migrations` (admin)
+- `POST /migrations/:slug/snapshot` (admin)
+- `POST /migrations/:slug/status` (admin)
+
+### Social Proxy
 
 - `POST /api/social/profile`
 - `POST /api/social/follow`
@@ -163,50 +221,26 @@ Social proxy:
 - `POST /api/social/like`
 - `POST /api/social/comment`
 - `GET /api/social/feed`
+- `GET /api/social/trending`
+- `GET /api/social/search`
+- `GET /api/social/post/:postId`
 
-## Tapestry Integration
-
-- Backend module `apps/api/src/lib/tapestry.ts` wraps profile, follow/unfollow, post, like, comment, and feed calls.
-- Backend route `apps/api/src/routes/social.ts` exposes proxy endpoints for frontend usage.
-- Frontend page `/social` provides profile management and feed interactions.
-- Claim completion posts a migration announcement through `/api/social/post`.
-
-## Notes
-
-- The previous loyalty module has been deprecated and removed.
-- Migration and social flows continue to work without that dependency.
-
-## Railway Deployment
-
-Create two Railway services from this repo:
-
-1. API service
-- Root directory: `apps/api`
-- Start command: `pnpm --filter @revivepass/api start`
-- Required env: `SOLANA_RPC_URL`, `PRIVATE_KEY`, `METADATA_URI`, `DB_PATH`, `TAPESTRY_API_URL`, `TAPESTRY_API_KEY`, `PORT`
-
-2. Web service
-- Root directory: `apps/web`
-- Start command: `pnpm --filter @revivepass/web start`
-- Required env: `NEXT_PUBLIC_API_URL`
-
-## Testing and Validation
-
-Run full build:
+## Testing & Validation
 
 ```bash
-pnpm run build
+pnpm build
+pnpm --filter @revivepass/api test
 ```
 
-Run local integration flow:
+Recommended end-to-end local validation:
 
-1. `pnpm dev`
-2. Create or use slug `social-campaign`
-3. Upload `samples/demo.csv` if needed
-4. Claim NFT from `/claim/<slug>`
-5. Open `/social` and confirm profile/feed actions
-6. Verify dashboard metrics at `/dashboard/<slug>`
+1. Login as admin (`/admin/login`)
+2. Create migration + upload whitelist + set status `open`
+3. Claim from `/claim/:slug` with eligible and non-eligible wallets
+4. Confirm dashboard stats update
+5. Verify social posting on `/social`
 
 ## License
 
 MIT
+

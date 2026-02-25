@@ -8,4 +8,8 @@ coverage
 *.sqlite-shm
 .api-run*.log
 .web-*.log
+api-dev.log
+api-dev-*.log
+web-dev.log
+web-runtime.log
 .DS_Store

@@ -1,12 +1,16 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
+  createPost,
   commentOnPost,
   createOrGetProfile,
   followUser,
   getFeed,
+  getPostById,
+  getTrendingPosts,
   likePost,
   postMigrationAnnouncement,
+  searchPosts,
   unfollowUser,
 } from "../lib/tapestry.js";
 
@@ -23,8 +27,13 @@ const followSchema = z.object({
 
 const postSchema = z.object({
   profileId: z.string().min(3),
-  migrationSlug: z.string().min(3),
-});
+  migrationSlug: z.string().min(3).optional(),
+  content: z.string().min(1).max(1000).optional(),
+  tags: z.array(z.string().min(1).max(32)).max(8).optional(),
+}).refine(
+  (value) => Boolean(value.migrationSlug || value.content),
+  { message: "migrationSlug or content is required" }
+);
 
 const likeSchema = z.object({
   postId: z.string().min(3),
@@ -33,10 +42,23 @@ const likeSchema = z.object({
 const commentSchema = z.object({
   postId: z.string().min(3),
   comment: z.string().min(1).max(280),
+  profileId: z.string().min(3).optional(),
 });
 
 const feedQuerySchema = z.object({
   profileId: z.string().min(3).optional(),
+  tag: z.string().min(1).max(32).optional(),
+  query: z.string().min(1).max(120).optional(),
+});
+
+const trendingQuerySchema = z.object({
+  namespace: z.string().min(1).max(64).optional(),
+  limit: z.coerce.number().int().min(1).max(30).optional(),
+});
+
+const searchQuerySchema = z.object({
+  namespace: z.string().min(1).max(64).optional(),
+  query: z.string().min(1).max(120),
 });
 
 export const registerSocialRoutes = async (app: FastifyInstance) => {
@@ -94,7 +116,19 @@ export const registerSocialRoutes = async (app: FastifyInstance) => {
     }
 
     try {
-      const post = await postMigrationAnnouncement(parsed.data.profileId, parsed.data.migrationSlug);
+      const post =
+        parsed.data.content && parsed.data.content.trim().length > 0
+          ? await createPost({
+              profileId: parsed.data.profileId,
+              content: parsed.data.content.trim(),
+              migrationSlug: parsed.data.migrationSlug,
+              tags: parsed.data.tags,
+            })
+          : await postMigrationAnnouncement(
+              parsed.data.profileId,
+              parsed.data.migrationSlug as string,
+              parsed.data.tags
+            );
       return { post };
     } catch (error) {
       request.log.error(error, "Social post failed");
@@ -123,7 +157,11 @@ export const registerSocialRoutes = async (app: FastifyInstance) => {
     }
 
     try {
-      const comment = await commentOnPost(parsed.data.postId, parsed.data.comment);
+      const comment = await commentOnPost(
+        parsed.data.postId,
+        parsed.data.comment,
+        parsed.data.profileId
+      );
       return { comment };
     } catch (error) {
       request.log.error(error, "Social comment failed");
@@ -138,10 +176,69 @@ export const registerSocialRoutes = async (app: FastifyInstance) => {
     }
 
     try {
-      const feed = await getFeed(parsed.data.profileId);
+      const feed = await getFeed({
+        profileId: parsed.data.profileId,
+        tag: parsed.data.tag,
+        query: parsed.data.query,
+      });
       return { feed };
     } catch (error) {
       request.log.error(error, "Social feed failed");
+      return reply.status(502).send({ error: (error as Error).message });
+    }
+  });
+
+  app.get("/api/social/trending", async (request, reply) => {
+    const parsed = trendingQuerySchema.safeParse(request.query ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.flatten() });
+    }
+
+    try {
+      const feed = await getTrendingPosts(
+        parsed.data.namespace ?? "revivepass",
+        parsed.data.limit ?? 8
+      );
+      return { feed };
+    } catch (error) {
+      request.log.error(error, "Social trending failed");
+      return reply.status(502).send({ error: (error as Error).message });
+    }
+  });
+
+  app.get("/api/social/search", async (request, reply) => {
+    const parsed = searchQuerySchema.safeParse(request.query ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.flatten() });
+    }
+
+    try {
+      const feed = await searchPosts(parsed.data.namespace ?? "revivepass", parsed.data.query);
+      return { feed };
+    } catch (error) {
+      request.log.error(error, "Social search failed");
+      return reply.status(502).send({ error: (error as Error).message });
+    }
+  });
+
+  app.get("/api/social/post/:postId", async (request, reply) => {
+    const params = z
+      .object({
+        postId: z.string().min(3),
+      })
+      .safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({ error: params.error.flatten() });
+    }
+
+    try {
+      const post = await getPostById(params.data.postId);
+      if (!post) {
+        return reply.status(404).send({ error: "Post not found" });
+      }
+      return { post };
+    } catch (error) {
+      request.log.error(error, "Social post detail failed");
       return reply.status(502).send({ error: (error as Error).message });
     }
   });

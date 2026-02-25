@@ -1,10 +1,19 @@
 import { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { createMigrationSchema, claimSchema } from "@revivepass/shared";
 import { db } from "../db.js";
-import { parseSnapshotCsv } from "../lib/csv.js";
+import {
+  mergeSnapshotCsvAandB,
+  parseSnapshotAmountCsv,
+  parseSnapshotCsv,
+  parseSnapshotMappingCsv,
+  type SnapshotRow,
+} from "../lib/csv.js";
 import { mintRevivalPass } from "../lib/mint.js";
 import { env } from "../config.js";
 import { verifyWalletSignature } from "../lib/auth.js";
+import { mergeSnapshotRows } from "../lib/snapshot.js";
+import { requireAdmin } from "../lib/admin.js";
 
 type Migration = {
   id: number;
@@ -12,6 +21,7 @@ type Migration = {
   slug: string;
   description: string;
   symbol: string;
+  status: "draft" | "open" | "closed";
   total_snapshot_count: number;
 };
 
@@ -33,6 +43,10 @@ const clusterSuffix = env.SOLANA_RPC_URL.includes("devnet")
     ? "?cluster=testnet"
     : "";
 
+const migrationStatusSchema = z.object({
+  status: z.enum(["draft", "open", "closed"]),
+});
+
 const loadMetadataJson = async (): Promise<MetadataJson | null> => {
   try {
     const response = await fetch(env.METADATA_URI, { cache: "no-store" });
@@ -47,6 +61,8 @@ const loadMetadataJson = async (): Promise<MetadataJson | null> => {
 
 export const registerMigrationRoutes = async (app: FastifyInstance) => {
   app.post("/migrations", async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
+
     const parsed = createMigrationSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: parsed.error.flatten() });
@@ -54,8 +70,8 @@ export const registerMigrationRoutes = async (app: FastifyInstance) => {
 
     try {
       db.prepare(
-        `INSERT INTO migrations(name, slug, description, symbol)
-         VALUES (?, ?, ?, ?)`
+        `INSERT INTO migrations(name, slug, description, symbol, status)
+         VALUES (?, ?, ?, ?, 'draft')`
       ).run(parsed.data.name, parsed.data.slug, parsed.data.description, parsed.data.symbol);
     } catch {
       return reply.status(409).send({ error: "Migration slug already exists" });
@@ -66,37 +82,121 @@ export const registerMigrationRoutes = async (app: FastifyInstance) => {
   });
 
   app.post("/migrations/:slug/snapshot", async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
+
     const { slug } = request.params as { slug: string };
     const migration = getMigration(slug);
     if (!migration) {
       return reply.status(404).send({ error: "Migration not found" });
     }
 
-    let csv = "";
+    if (migration.status !== "draft") {
+      return reply
+        .status(409)
+        .send({ error: "Snapshot can only be updated while migration status is draft" });
+    }
+
+    let csvCombined = "";
+    let csvA = "";
+    let csvB = "";
+    const manualAddressInputs: unknown[] = [];
+    let jsonManualAddressesInput: unknown;
     if (request.isMultipart()) {
-      const file = await request.file();
-      if (!file) {
-        return reply.status(400).send({ error: "CSV file is required" });
+      for await (const part of request.parts()) {
+        if (part.type === "field") {
+          if (part.fieldname === "manualAddresses" || part.fieldname === "manualAddresses[]") {
+            manualAddressInputs.push(part.value);
+          }
+          continue;
+        }
+
+        if (!["file", "csv", "csvA", "csvB"].includes(part.fieldname)) {
+          for await (const _ of part.file) {
+            // consume unknown file stream
+          }
+          continue;
+        }
+
+        const chunks: Buffer[] = [];
+        for await (const chunk of part.file) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        const value = Buffer.concat(chunks).toString("utf8");
+
+        if (part.fieldname === "file" || part.fieldname === "csv") {
+          csvCombined = value;
+        } else if (part.fieldname === "csvA") {
+          csvA = value;
+        } else if (part.fieldname === "csvB") {
+          csvB = value;
+        }
       }
-      const chunks: Buffer[] = [];
-      for await (const chunk of file.file) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      }
-      csv = Buffer.concat(chunks).toString("utf8");
     } else {
-      const body = request.body as { csv?: string };
-      csv = body?.csv ?? "";
+      const body = request.body as {
+        csv?: string;
+        csvA?: string;
+        csvB?: string;
+        manualAddresses?: unknown;
+      };
+      csvCombined = body?.csv ?? "";
+      csvA = body?.csvA ?? "";
+      csvB = body?.csvB ?? "";
+      jsonManualAddressesInput = body?.manualAddresses;
     }
 
-    if (!csv.trim()) {
-      return reply.status(400).send({ error: "CSV content is empty" });
+    let rows: SnapshotRow[] = [];
+    let csvProvided = 0;
+    let csvAProvided = 0;
+    let csvBProvided = 0;
+    let matched = 0;
+    let unmatchedA = 0;
+    let unmatchedB = 0;
+    let csvDuplicatesIgnored = 0;
+
+    if (csvCombined.trim()) {
+      try {
+        rows = parseSnapshotCsv(csvCombined);
+        csvProvided = rows.length;
+        matched = rows.length;
+      } catch (error) {
+        return reply.status(400).send({ error: (error as Error).message });
+      }
+    } else if (csvA.trim() || csvB.trim()) {
+      try {
+        const rowsA = csvA.trim() ? parseSnapshotAmountCsv(csvA) : [];
+        const rowsB = csvB.trim() ? parseSnapshotMappingCsv(csvB) : [];
+        const merged = mergeSnapshotCsvAandB(rowsA, rowsB);
+        rows = merged.rows;
+        csvAProvided = merged.csvAProvided;
+        csvBProvided = merged.csvBProvided;
+        matched = merged.matched;
+        unmatchedA = merged.unmatchedA;
+        unmatchedB = merged.unmatchedB;
+        csvDuplicatesIgnored = merged.duplicatesIgnored;
+      } catch (error) {
+        return reply.status(400).send({ error: (error as Error).message });
+      }
     }
 
-    let rows;
-    try {
-      rows = parseSnapshotCsv(csv);
-    } catch (error) {
-      return reply.status(400).send({ error: (error as Error).message });
+    const mergeResult = mergeSnapshotRows(
+      rows,
+      request.isMultipart() ? manualAddressInputs : jsonManualAddressesInput
+    );
+
+    if (!csvCombined.trim() && !csvA.trim() && !csvB.trim() && mergeResult.manualProvided === 0) {
+      return reply
+        .status(400)
+        .send({ error: "CSV snapshot input or manual addresses are required" });
+    }
+
+    const snapshotRows = mergeResult.rows;
+
+    if (snapshotRows.length === 0) {
+      return reply.status(400).send({
+        error: "No valid wallet addresses found",
+        invalid: mergeResult.invalidEntries.length,
+        invalidEntries: mergeResult.invalidEntries,
+      });
     }
 
     const sync = db.transaction(() => {
@@ -106,12 +206,12 @@ export const registerMigrationRoutes = async (app: FastifyInstance) => {
          VALUES (?, ?, ?, ?)`
       );
 
-      for (const row of rows) {
+      for (const row of snapshotRows) {
         insert.run(migration.id, row.evm_address, row.solana_wallet, row.amount);
       }
 
       db.prepare(`UPDATE migrations SET total_snapshot_count = ? WHERE id = ?`).run(
-        rows.length,
+        snapshotRows.length,
         migration.id
       );
     });
@@ -122,7 +222,21 @@ export const registerMigrationRoutes = async (app: FastifyInstance) => {
       return reply.status(400).send({ error: `Snapshot sync failed: ${(error as Error).message}` });
     }
 
-    return { inserted: rows.length };
+    return {
+      inserted: snapshotRows.length,
+      status: migration.status,
+      csvProvided: mergeResult.csvProvided,
+      csvAProvided,
+      csvBProvided,
+      matched,
+      unmatchedA,
+      unmatchedB,
+      manualProvided: mergeResult.manualProvided,
+      manualInserted: mergeResult.manualInserted,
+      duplicatesIgnored: mergeResult.duplicatesIgnored + csvDuplicatesIgnored,
+      invalid: mergeResult.invalidEntries.length,
+      invalidEntries: mergeResult.invalidEntries,
+    };
   });
 
   app.get("/migrations/:slug", async (request, reply) => {
@@ -142,6 +256,46 @@ export const registerMigrationRoutes = async (app: FastifyInstance) => {
       remaining: Math.max(0, migration.total_snapshot_count - claimed.count),
       claimLink: `/claim/${migration.slug}`,
     };
+  });
+
+  app.post("/migrations/:slug/status", async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
+
+    const { slug } = request.params as { slug: string };
+    const parsed = migrationStatusSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.flatten() });
+    }
+
+    const migration = getMigration(slug);
+    if (!migration) {
+      return reply.status(404).send({ error: "Migration not found" });
+    }
+
+    const nextStatus = parsed.data.status;
+    const current = migration.status;
+
+    if (nextStatus === current) {
+      return { ok: true, migration: { ...migration, status: current } };
+    }
+
+    const isValidTransition =
+      (current === "draft" && nextStatus === "open") ||
+      (current === "open" && nextStatus === "closed");
+
+    if (!isValidTransition) {
+      return reply.status(400).send({
+        error: `Invalid status transition: ${current} -> ${nextStatus}. Allowed flow is draft -> open -> closed.`,
+      });
+    }
+
+    if (nextStatus === "open" && migration.total_snapshot_count < 1) {
+      return reply.status(400).send({ error: "Cannot open claim without snapshot entries" });
+    }
+
+    db.prepare(`UPDATE migrations SET status = ? WHERE id = ?`).run(nextStatus, migration.id);
+    const updated = getMigration(slug);
+    return { ok: true, migration: updated };
   });
 
   app.get("/migrations/:slug/metadata", async (request, reply) => {
@@ -190,9 +344,12 @@ export const registerMigrationRoutes = async (app: FastifyInstance) => {
       .get(migration.id, wallet) as
       | { tx_signature: string; mint_address: string }
       | undefined;
+    const claimOpen = migration.status === "open";
 
     return {
       eligible: Boolean(row),
+      claimOpen,
+      migrationStatus: migration.status,
       amount: row?.amount ?? 0,
       evmAddress: row?.evm_address ?? null,
       alreadyClaimed: Boolean(alreadyClaimed),
@@ -233,17 +390,25 @@ export const registerMigrationRoutes = async (app: FastifyInstance) => {
       };
     }
 
+    if (migration.status !== "open") {
+      return reply.status(403).send({ error: "Claim portal is not open for this migration" });
+    }
+
     const nonceRow = db
       .prepare(
-        `SELECT id, expires_at, used FROM auth_nonces
+        `SELECT id, purpose, expires_at, used FROM auth_nonces
          WHERE wallet = ? AND nonce = ? ORDER BY id DESC LIMIT 1`
       )
       .get(parsed.data.wallet, parsed.data.nonce) as
-      | { id: number; expires_at: string; used: number }
+      | { id: number; purpose: string; expires_at: string; used: number }
       | undefined;
 
     if (!nonceRow || nonceRow.used) {
       return reply.status(401).send({ error: "Nonce is invalid or already used" });
+    }
+
+    if (nonceRow.purpose !== "claim") {
+      return reply.status(401).send({ error: "Nonce purpose mismatch" });
     }
 
     if (Date.parse(nonceRow.expires_at) < Date.now()) {

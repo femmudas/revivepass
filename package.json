@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "pnpm -r --parallel --filter @revivepass/api --filter @revivepass/web dev",
     "build": "pnpm -r --filter @revivepass/shared --filter @revivepass/api --filter @revivepass/web build",
+    "start": "node scripts/railway-start.mjs",
+    "start:web": "pnpm --filter @revivepass/web start",
+    "start:api": "pnpm --filter @revivepass/api start",
     "lint": "pnpm -r lint",
     "seed": "pnpm --filter @revivepass/api seed",
     "db:init": "pnpm --filter @revivepass/api db:init"

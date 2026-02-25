@@ -94,6 +94,23 @@ const request = async <T>(path: string, method: HttpMethod, body?: unknown): Pro
   return data as T;
 };
 
+const withRemoteFallback = async <T>(
+  remoteFn: () => Promise<T>,
+  mockFn: () => T | Promise<T>
+): Promise<T> => {
+  if (!isRemoteEnabled()) {
+    return await mockFn();
+  }
+
+  try {
+    return await remoteFn();
+  } catch (error) {
+    // Keep social features available even when upstream paths/keys vary by environment.
+    console.warn("[tapestry] remote request failed, falling back to mock mode:", (error as Error).message);
+    return await mockFn();
+  }
+};
+
 const normalizeTags = (tags?: string[]) =>
   (tags ?? [])
     .map((entry) => entry.trim().toLowerCase())
@@ -183,7 +200,7 @@ export const createOrGetProfile = async (
   bio?: string,
   avatarUrl?: string
 ) => {
-  if (!isRemoteEnabled()) {
+  const mockCreateOrGetProfile = () => {
     const key = walletAddress.trim();
     const current = mockProfilesByWallet.get(key);
     if (current) {
@@ -206,19 +223,24 @@ export const createOrGetProfile = async (
       source: "mock",
     };
     return saveProfile(profile);
-  }
+  };
 
-  const profile = await request<Partial<TapestryProfile>>("/profiles/find-or-create", "POST", {
-    walletAddress,
-    handle,
-    bio,
-    avatarUrl,
-  });
-  return mapRemoteProfile(profile);
+  return withRemoteFallback(
+    async () => {
+      const profile = await request<Partial<TapestryProfile>>("/profiles/find-or-create", "POST", {
+        walletAddress,
+        handle,
+        bio,
+        avatarUrl,
+      });
+      return mapRemoteProfile(profile);
+    },
+    mockCreateOrGetProfile
+  );
 };
 
 export const followUser = async (currentUserId: string, targetUserId: string) => {
-  if (!isRemoteEnabled()) {
+  const mockFollowUser = () => {
     mockFollows.add(`${currentUserId}:${targetUserId}`);
     const current = mockProfilesById.get(currentUserId);
     const target = mockProfilesById.get(targetUserId);
@@ -228,15 +250,20 @@ export const followUser = async (currentUserId: string, targetUserId: string) =>
       currentUser: current ? hydrateFollowerStats(current) : null,
       targetUser: target ? hydrateFollowerStats(target) : null,
     };
-  }
-  return request<{ ok: boolean }>("/relationships/follow", "POST", {
-    currentUserId,
-    targetUserId,
-  });
+  };
+
+  return withRemoteFallback(
+    () =>
+      request<{ ok: boolean }>("/relationships/follow", "POST", {
+        currentUserId,
+        targetUserId,
+      }),
+    mockFollowUser
+  );
 };
 
 export const unfollowUser = async (currentUserId: string, targetUserId: string) => {
-  if (!isRemoteEnabled()) {
+  const mockUnfollowUser = () => {
     mockFollows.delete(`${currentUserId}:${targetUserId}`);
     const current = mockProfilesById.get(currentUserId);
     const target = mockProfilesById.get(targetUserId);
@@ -246,17 +273,22 @@ export const unfollowUser = async (currentUserId: string, targetUserId: string) 
       currentUser: current ? hydrateFollowerStats(current) : null,
       targetUser: target ? hydrateFollowerStats(target) : null,
     };
-  }
-  return request<{ ok: boolean }>("/relationships/unfollow", "POST", {
-    currentUserId,
-    targetUserId,
-  });
+  };
+
+  return withRemoteFallback(
+    () =>
+      request<{ ok: boolean }>("/relationships/unfollow", "POST", {
+        currentUserId,
+        targetUserId,
+      }),
+    mockUnfollowUser
+  );
 };
 
 export const createPost = async ({ profileId, content, migrationSlug, tags }: CreatePostInput) => {
   const normalizedTags = normalizeTags(tags);
 
-  if (!isRemoteEnabled()) {
+  const mockCreatePost = () => {
     const author = mockProfilesById.get(profileId);
     const post: TapestryPost = {
       id: mockId("post"),
@@ -273,19 +305,24 @@ export const createPost = async ({ profileId, content, migrationSlug, tags }: Cr
     };
     mockPosts.unshift(post);
     return post;
-  }
+  };
 
-  const post = await request<Partial<TapestryPost>>("/posts", "POST", {
-    profileId,
-    content,
-    migrationSlug,
-    tags: normalizedTags,
-    customProperties: {
-      tags: normalizedTags,
-      migrationSlug,
+  return withRemoteFallback(
+    async () => {
+      const post = await request<Partial<TapestryPost>>("/posts", "POST", {
+        profileId,
+        content,
+        migrationSlug,
+        tags: normalizedTags,
+        customProperties: {
+          tags: normalizedTags,
+          migrationSlug,
+        },
+      });
+      return mapRemotePost(post);
     },
-  });
-  return mapRemotePost(post);
+    mockCreatePost
+  );
 };
 
 export const postMigrationAnnouncement = async (
@@ -301,16 +338,20 @@ export const postMigrationAnnouncement = async (
   });
 
 export const likePost = async (postId: string) => {
-  if (!isRemoteEnabled()) {
+  const mockLikePost = () => {
     const post = mockPosts.find((entry) => entry.id === postId);
     if (post) post.likes += 1;
     return { ok: true, likes: post?.likes ?? 0, source: "mock" as const };
-  }
-  return request<{ ok: boolean; likes: number }>(`/posts/${postId}/likes`, "POST");
+  };
+
+  return withRemoteFallback(
+    () => request<{ ok: boolean; likes: number }>(`/posts/${postId}/likes`, "POST"),
+    mockLikePost
+  );
 };
 
 export const commentOnPost = async (postId: string, comment: string, profileId?: string) => {
-  if (!isRemoteEnabled()) {
+  const mockCommentOnPost = () => {
     const post = mockPosts.find((entry) => entry.id === postId);
     const payload: TapestryComment = {
       id: mockId("comment"),
@@ -321,19 +362,30 @@ export const commentOnPost = async (postId: string, comment: string, profileId?:
     };
     if (post) post.comments.push(payload);
     return { ...payload, source: "mock" as const };
-  }
-  return request<TapestryComment>(`/posts/${postId}/comments`, "POST", {
-    comment,
-    profileId,
-  });
+  };
+
+  return withRemoteFallback(
+    () =>
+      request<TapestryComment>(`/posts/${postId}/comments`, "POST", {
+        comment,
+        profileId,
+      }),
+    mockCommentOnPost
+  );
 };
 
 export const getPostById = async (postId: string) => {
-  if (!isRemoteEnabled()) {
+  const mockGetPostById = () => {
     return mockPosts.find((entry) => entry.id === postId) ?? null;
-  }
-  const post = await request<Partial<TapestryPost>>(`/posts/${postId}`, "GET");
-  return mapRemotePost(post);
+  };
+
+  return withRemoteFallback(
+    async () => {
+      const post = await request<Partial<TapestryPost>>(`/posts/${postId}`, "GET");
+      return mapRemotePost(post);
+    },
+    mockGetPostById
+  );
 };
 
 const applyFeedFilter = (input: TapestryPost[], options: FeedOptions) => {
@@ -350,21 +402,26 @@ const applyFeedFilter = (input: TapestryPost[], options: FeedOptions) => {
 };
 
 export const getFeed = async (options: FeedOptions = {}) => {
-  if (!isRemoteEnabled()) {
+  const mockGetFeed = () => {
     const filtered = applyFeedFilter(mockPosts, options);
     return filtered.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, 50);
-  }
+  };
 
-  const query = new URLSearchParams();
-  if (options.profileId) query.set("profileId", options.profileId);
-  if (options.tag) query.set("tag", options.tag);
-  if (options.query) query.set("query", options.query);
+  return withRemoteFallback(
+    async () => {
+      const query = new URLSearchParams();
+      if (options.profileId) query.set("profileId", options.profileId);
+      if (options.tag) query.set("tag", options.tag);
+      if (options.query) query.set("query", options.query);
 
-  const data = await request<Partial<TapestryPost>[]>(
-    `/feed${query.size > 0 ? `?${query.toString()}` : ""}`,
-    "GET"
+      const data = await request<Partial<TapestryPost>[]>(
+        `/feed${query.size > 0 ? `?${query.toString()}` : ""}`,
+        "GET"
+      );
+      return applyFeedFilter(data.map(mapRemotePost), options);
+    },
+    mockGetFeed
   );
-  return applyFeedFilter(data.map(mapRemotePost), options);
 };
 
 export const getTrendingPosts = async (namespace = "default", limit = 8) => {

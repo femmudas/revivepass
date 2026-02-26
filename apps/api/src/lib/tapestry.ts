@@ -1,7 +1,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { env } from "../config.js";
 
-type HttpMethod = "GET" | "POST";
+type HttpMethod = "GET" | "POST" | "DELETE";
 
 export type TapestryProfile = {
   id: string;
@@ -56,8 +56,8 @@ type CreatePostInput = {
 };
 
 const baseUrl = env.TAPESTRY_API_URL.replace(/\/$/, "");
-const isRemoteEnabled = () =>
-  process.env.REVIVEPASS_FORCE_SOCIAL_MOCK !== "1" &&
+const forceMock = process.env.REVIVEPASS_FORCE_SOCIAL_MOCK === "1";
+const hasRemoteConfig =
   process.env.NODE_ENV !== "test" &&
   Boolean(env.TAPESTRY_API_KEY) &&
   !env.TAPESTRY_API_KEY.toLowerCase().startsWith("replace-with");
@@ -69,46 +69,117 @@ const mockFollows = new Set<string>();
 
 const mockId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 
-const request = async <T>(path: string, method: HttpMethod, body?: unknown): Promise<T> => {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${env.TAPESTRY_API_KEY}`,
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+class TapestryHttpError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly url: string
+  ) {
+    super(message);
+    this.name = "TapestryHttpError";
+  }
+}
 
-  const data = (await response.json().catch(() => ({}))) as
-    | T
-    | { message?: string; error?: string };
+const getBaseCandidates = () => {
+  if (baseUrl.endsWith("/api/v1")) return [baseUrl];
+  if (baseUrl.endsWith("/v1")) {
+    return [baseUrl, baseUrl.replace(/\/v1$/, "/api/v1"), baseUrl.replace(/\/v1$/, "")];
+  }
+  if (baseUrl.endsWith("/api")) return [`${baseUrl}/v1`, baseUrl];
+  return [`${baseUrl}/v1`, `${baseUrl}/api/v1`, baseUrl];
+};
 
-  if (!response.ok) {
-    const message =
-      (data as { message?: string; error?: string }).message ??
-      (data as { message?: string; error?: string }).error ??
-      `Tapestry request failed (${response.status})`;
-    throw new Error(message);
+const appendApiKeyToPath = (path: string) => {
+  if (!env.TAPESTRY_API_KEY) return path;
+  if (/([?&])apiKey=/.test(path)) return path;
+  const joiner = path.includes("?") ? "&" : "?";
+  return `${path}${joiner}apiKey=${encodeURIComponent(env.TAPESTRY_API_KEY)}`;
+};
+
+const extractErrorMessage = (data: unknown, status: number) => {
+  if (typeof data === "object" && data !== null) {
+    const typed = data as { message?: string; error?: string; details?: string };
+    return typed.message ?? typed.error ?? typed.details ?? `Tapestry request failed (${status})`;
+  }
+  if (typeof data === "string" && data.trim()) return data;
+  return `Tapestry request failed (${status})`;
+};
+
+const requestOnce = async <T>(
+  endpointPath: string,
+  method: HttpMethod,
+  body?: unknown
+): Promise<T> => {
+  const path = endpointPath.startsWith("/") ? endpointPath : `/${endpointPath}`;
+  const pathWithKey = appendApiKeyToPath(path);
+
+  let lastError: TapestryHttpError | null = null;
+
+  for (const candidateBase of getBaseCandidates()) {
+    const url = `${candidateBase}${pathWithKey}`;
+    const response = await fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Authorization: `Bearer ${env.TAPESTRY_API_KEY}`,
+        "x-api-key": env.TAPESTRY_API_KEY,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) {
+      return data as T;
+    }
+
+    const message = extractErrorMessage(data, response.status);
+    lastError = new TapestryHttpError(message, response.status, url);
+    if (response.status !== 404) {
+      throw lastError;
+    }
   }
 
-  return data as T;
+  if (lastError) throw lastError;
+  throw new Error("Tapestry request failed");
+};
+
+const requestAny = async <T>(
+  paths: string[],
+  method: HttpMethod,
+  body?: unknown
+): Promise<T> => {
+  let lastError: Error | null = null;
+
+  for (const path of paths) {
+    try {
+      return await requestOnce<T>(path, method, body);
+    } catch (error) {
+      const typed = error as TapestryHttpError;
+      lastError = typed;
+      if (!(typed instanceof TapestryHttpError) || typed.status !== 404) {
+        throw typed;
+      }
+    }
+  }
+
+  if (lastError) throw lastError;
+  throw new Error("Tapestry request failed");
 };
 
 const withRemoteFallback = async <T>(
   remoteFn: () => Promise<T>,
   mockFn: () => T | Promise<T>
 ): Promise<T> => {
-  if (!isRemoteEnabled()) {
+  if (forceMock) {
     return await mockFn();
   }
-
-  try {
-    return await remoteFn();
-  } catch (error) {
-    // Keep social features available even when upstream paths/keys vary by environment.
-    console.warn("[tapestry] remote request failed, falling back to mock mode:", (error as Error).message);
-    return await mockFn();
+  if (!hasRemoteConfig) {
+    throw new Error(
+      "Tapestry API is not configured. Set TAPESTRY_API_URL and TAPESTRY_API_KEY, or set REVIVEPASS_FORCE_SOCIAL_MOCK=1 for local mock mode."
+    );
   }
+  return await remoteFn();
 };
 
 const normalizeTags = (tags?: string[]) =>
@@ -164,25 +235,98 @@ const saveProfile = (profile: TapestryProfile) => {
 };
 
 const mapRemoteProfile = (raw: Partial<TapestryProfile>): TapestryProfile => ({
-  id: raw.id ?? mockId("profile"),
-  walletAddress: raw.walletAddress ?? "",
-  handle: raw.handle ?? "unknown",
-  bio: raw.bio ?? "",
-  avatarUrl: raw.avatarUrl,
-  followers: Number(raw.followers ?? 0),
-  following: Number(raw.following ?? 0),
+  id:
+    (raw as Partial<TapestryProfile> & { profileId?: string; _id?: string }).id ??
+    (raw as Partial<TapestryProfile> & { profileId?: string; _id?: string }).profileId ??
+    (raw as Partial<TapestryProfile> & { profileId?: string; _id?: string })._id ??
+    mockId("profile"),
+  walletAddress:
+    (raw as Partial<TapestryProfile> & { wallet?: string; wallet_address?: string }).walletAddress ??
+    (raw as Partial<TapestryProfile> & { wallet?: string; wallet_address?: string }).wallet ??
+    (raw as Partial<TapestryProfile> & { wallet?: string; wallet_address?: string }).wallet_address ??
+    "",
+  handle:
+    (raw as Partial<TapestryProfile> & { username?: string; name?: string }).handle ??
+    (raw as Partial<TapestryProfile> & { username?: string; name?: string }).username ??
+    (raw as Partial<TapestryProfile> & { username?: string; name?: string }).name ??
+    "unknown",
+  bio: (raw as Partial<TapestryProfile> & { description?: string }).bio ??
+    (raw as Partial<TapestryProfile> & { description?: string }).description ??
+    "",
+  avatarUrl:
+    (raw as Partial<TapestryProfile> & { avatar?: string }).avatarUrl ??
+    (raw as Partial<TapestryProfile> & { avatar?: string }).avatar,
+  followers: Number(
+    (raw as Partial<TapestryProfile> & { followersCount?: number }).followers ??
+      (raw as Partial<TapestryProfile> & { followersCount?: number }).followersCount ??
+      0
+  ),
+  following: Number(
+    (raw as Partial<TapestryProfile> & { followingCount?: number }).following ??
+      (raw as Partial<TapestryProfile> & { followingCount?: number }).followingCount ??
+      0
+  ),
   source: "tapestry",
 });
 
 const mapRemotePost = (raw: Partial<TapestryPost>): TapestryPost => ({
-  id: raw.id ?? mockId("post"),
-  profileId: raw.profileId ?? "unknown",
-  authorHandle: raw.authorHandle ?? "member",
-  authorAvatarUrl: raw.authorAvatarUrl,
-  content: raw.content ?? "",
-  migrationSlug: raw.migrationSlug,
-  tags: normalizeTags(raw.tags),
-  likes: Number(raw.likes ?? 0),
+  id:
+    (raw as Partial<TapestryPost> & { contentId?: string; _id?: string }).id ??
+    (raw as Partial<TapestryPost> & { contentId?: string; _id?: string }).contentId ??
+    (raw as Partial<TapestryPost> & { contentId?: string; _id?: string })._id ??
+    mockId("post"),
+  profileId:
+    (raw as Partial<TapestryPost> & { authorId?: string; author?: { id?: string } }).profileId ??
+    (raw as Partial<TapestryPost> & { authorId?: string; author?: { id?: string } }).authorId ??
+    (raw as Partial<TapestryPost> & { authorId?: string; author?: { id?: string } }).author?.id ??
+    "unknown",
+  authorHandle:
+    (raw as Partial<TapestryPost> & {
+      author?: { handle?: string; username?: string; name?: string };
+    }).authorHandle ??
+    (raw as Partial<TapestryPost> & {
+      author?: { handle?: string; username?: string; name?: string };
+    }).author?.handle ??
+    (raw as Partial<TapestryPost> & {
+      author?: { handle?: string; username?: string; name?: string };
+    }).author?.username ??
+    (raw as Partial<TapestryPost> & {
+      author?: { handle?: string; username?: string; name?: string };
+    }).author?.name ??
+    "member",
+  authorAvatarUrl:
+    (raw as Partial<TapestryPost> & { author?: { avatarUrl?: string; avatar?: string } })
+      .authorAvatarUrl ??
+    (raw as Partial<TapestryPost> & { author?: { avatarUrl?: string; avatar?: string } }).author
+      ?.avatarUrl ??
+    (raw as Partial<TapestryPost> & { author?: { avatarUrl?: string; avatar?: string } }).author
+      ?.avatar,
+  content:
+    (raw as Partial<TapestryPost> & { text?: string; body?: string }).content ??
+    (raw as Partial<TapestryPost> & { text?: string; body?: string }).text ??
+    (raw as Partial<TapestryPost> & { text?: string; body?: string }).body ??
+    "",
+  migrationSlug:
+    (raw as Partial<TapestryPost> & {
+      customProperties?: { migrationSlug?: string };
+    }).migrationSlug ??
+    (raw as Partial<TapestryPost> & {
+      customProperties?: { migrationSlug?: string };
+    }).customProperties?.migrationSlug,
+  tags: normalizeTags(
+    (raw as Partial<TapestryPost> & {
+      customProperties?: { tags?: string[] };
+    }).tags ??
+      (raw as Partial<TapestryPost> & {
+        customProperties?: { tags?: string[] };
+      }).customProperties?.tags
+  ),
+  likes: Number(
+    (raw as Partial<TapestryPost> & { likesCount?: number; likeCount?: number }).likes ??
+      (raw as Partial<TapestryPost> & { likesCount?: number; likeCount?: number }).likesCount ??
+      (raw as Partial<TapestryPost> & { likesCount?: number; likeCount?: number }).likeCount ??
+      0
+  ),
   comments: (raw.comments ?? []).map((entry) => ({
     id: entry.id,
     postId: entry.postId,
@@ -227,12 +371,18 @@ export const createOrGetProfile = async (
 
   return withRemoteFallback(
     async () => {
-      const profile = await request<Partial<TapestryProfile>>("/profiles/find-or-create", "POST", {
+      const payload = await requestAny<
+        Partial<TapestryProfile> | { profile?: Partial<TapestryProfile> } | { data?: Partial<TapestryProfile> }
+      >(["/profiles/findOrCreate", "/profiles/find-or-create"], "POST", {
         walletAddress,
         handle,
         bio,
         avatarUrl,
       });
+      const profile =
+        (payload as { profile?: Partial<TapestryProfile> }).profile ??
+        (payload as { data?: Partial<TapestryProfile> }).data ??
+        (payload as Partial<TapestryProfile>);
       return mapRemoteProfile(profile);
     },
     mockCreateOrGetProfile
@@ -254,10 +404,16 @@ export const followUser = async (currentUserId: string, targetUserId: string) =>
 
   return withRemoteFallback(
     () =>
-      request<{ ok: boolean }>("/relationships/follow", "POST", {
-        currentUserId,
-        targetUserId,
-      }),
+      requestAny<{ ok?: boolean; success?: boolean }>(
+        ["/followers", "/relationships/follow"],
+        "POST",
+        {
+          currentUserId,
+          targetUserId,
+          followerProfileId: currentUserId,
+          followingProfileId: targetUserId,
+        }
+      ),
     mockFollowUser
   );
 };
@@ -277,10 +433,16 @@ export const unfollowUser = async (currentUserId: string, targetUserId: string) 
 
   return withRemoteFallback(
     () =>
-      request<{ ok: boolean }>("/relationships/unfollow", "POST", {
-        currentUserId,
-        targetUserId,
-      }),
+      requestAny<{ ok?: boolean; success?: boolean }>(
+        ["/followers", "/relationships/unfollow"],
+        "DELETE",
+        {
+          currentUserId,
+          targetUserId,
+          followerProfileId: currentUserId,
+          followingProfileId: targetUserId,
+        }
+      ),
     mockUnfollowUser
   );
 };
@@ -309,9 +471,12 @@ export const createPost = async ({ profileId, content, migrationSlug, tags }: Cr
 
   return withRemoteFallback(
     async () => {
-      const post = await request<Partial<TapestryPost>>("/posts", "POST", {
+      const payload = await requestAny<
+        Partial<TapestryPost> | { content?: Partial<TapestryPost> } | { post?: Partial<TapestryPost> } | { data?: Partial<TapestryPost> }
+      >(["/contents/create", "/contents", "/posts"], "POST", {
         profileId,
         content,
+        text: content,
         migrationSlug,
         tags: normalizedTags,
         customProperties: {
@@ -319,6 +484,11 @@ export const createPost = async ({ profileId, content, migrationSlug, tags }: Cr
           migrationSlug,
         },
       });
+      const post =
+        (payload as { content?: Partial<TapestryPost> }).content ??
+        (payload as { post?: Partial<TapestryPost> }).post ??
+        (payload as { data?: Partial<TapestryPost> }).data ??
+        (payload as Partial<TapestryPost>);
       return mapRemotePost(post);
     },
     mockCreatePost
@@ -345,7 +515,15 @@ export const likePost = async (postId: string) => {
   };
 
   return withRemoteFallback(
-    () => request<{ ok: boolean; likes: number }>(`/posts/${postId}/likes`, "POST"),
+    () =>
+      requestAny<{ ok?: boolean; likes?: number; count?: number }>(
+        [`/likes`, `/posts/${postId}/likes`],
+        "POST",
+        {
+          postId,
+          contentId: postId,
+        }
+      ),
     mockLikePost
   );
 };
@@ -365,11 +543,19 @@ export const commentOnPost = async (postId: string, comment: string, profileId?:
   };
 
   return withRemoteFallback(
-    () =>
-      request<TapestryComment>(`/posts/${postId}/comments`, "POST", {
-        comment,
-        profileId,
-      }),
+    async () => {
+      const payload = await requestAny<TapestryComment | { comment?: TapestryComment }>(
+        ["/comments", `/posts/${postId}/comments`],
+        "POST",
+        {
+          postId,
+          contentId: postId,
+          comment,
+          profileId,
+        }
+      );
+      return (payload as { comment?: TapestryComment }).comment ?? (payload as TapestryComment);
+    },
     mockCommentOnPost
   );
 };
@@ -381,7 +567,13 @@ export const getPostById = async (postId: string) => {
 
   return withRemoteFallback(
     async () => {
-      const post = await request<Partial<TapestryPost>>(`/posts/${postId}`, "GET");
+      const payload = await requestAny<
+        Partial<TapestryPost> | { content?: Partial<TapestryPost> } | { post?: Partial<TapestryPost> }
+      >([`/contents/${postId}`, `/posts/${postId}`], "GET");
+      const post =
+        (payload as { content?: Partial<TapestryPost> }).content ??
+        (payload as { post?: Partial<TapestryPost> }).post ??
+        (payload as Partial<TapestryPost>);
       return mapRemotePost(post);
     },
     mockGetPostById
@@ -414,11 +606,30 @@ export const getFeed = async (options: FeedOptions = {}) => {
       if (options.tag) query.set("tag", options.tag);
       if (options.query) query.set("query", options.query);
 
-      const data = await request<Partial<TapestryPost>[]>(
-        `/feed${query.size > 0 ? `?${query.toString()}` : ""}`,
+      const suffix = query.size > 0 ? `?${query.toString()}` : "";
+      const payload = await requestAny<
+        Partial<TapestryPost>[] | { feed?: Partial<TapestryPost>[] } | { contents?: Partial<TapestryPost>[] } | { data?: Partial<TapestryPost>[] } | { items?: Partial<TapestryPost>[] }
+      >(
+        [`/contents${suffix}`, `/feed${suffix}`],
         "GET"
       );
-      return applyFeedFilter(data.map(mapRemotePost), options);
+
+      const normalizedPayload = Array.isArray(payload)
+        ? null
+        : (payload as {
+            feed?: Partial<TapestryPost>[];
+            contents?: Partial<TapestryPost>[];
+            data?: Partial<TapestryPost>[];
+            items?: Partial<TapestryPost>[];
+          });
+      const list = Array.isArray(payload)
+        ? payload
+        : normalizedPayload?.feed ??
+          normalizedPayload?.contents ??
+          normalizedPayload?.data ??
+          normalizedPayload?.items ??
+          [];
+      return applyFeedFilter(list.map(mapRemotePost), options);
     },
     mockGetFeed
   );

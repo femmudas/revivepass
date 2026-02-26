@@ -14,10 +14,10 @@ const campaigns = [
     status: "open" as const,
   },
   {
-    slug: "social-campaign",
-    name: "Migration Social Share",
-    description: "Share your migration journey via Tapestry and connect with others.",
-    symbol: "SOCIAL",
+    slug: "legacy-holders-demo",
+    name: "Legacy Holders Migration",
+    description: "Demo migration campaign for legacy holders claiming on Solana.",
+    symbol: "LEGACY",
     status: "open" as const,
   },
 ];

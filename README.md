@@ -1,11 +1,11 @@
 # RevivePass
 
-RevivePass is a Solana migration portal for legacy-chain communities.  
-It manages eligibility with snapshots, enforces one-time NFT claims, and includes a social layer powered by Tapestry.
+RevivePass is a Solana migration portal for legacy-chain communities.
+It manages wallet eligibility with snapshots, enforces one-time NFT claims, and tracks migration progress.
 
 ## Overview
 
-RevivePass runs two clear personas:
+RevivePass runs two personas:
 
 1. **Admin**
 - Signs in with an allowlisted Solana wallet (`/admin/login`)
@@ -36,7 +36,6 @@ RevivePass runs two clear personas:
 - One-wallet-per-migration claim enforcement
 - NFT minting via Metaplex Umi
 - Metadata URI from Pinata IPFS (`METADATA_URI`)
-- Tapestry social integration (profiles, follows, posts, likes, comments, trending, search)
 
 ## Architecture
 
@@ -46,7 +45,6 @@ flowchart LR
   A --> D[(SQLite)]
   U[User Wallet] -->|nonce + signature| A
   A -->|Mint NFT| S[Solana RPC + Metaplex]
-  A -->|Social proxy| T[Tapestry API]
 ```
 
 ```mermaid
@@ -82,7 +80,6 @@ sequenceDiagram
 - **Frontend**: Next.js App Router, TailwindCSS, shadcn-style UI primitives, framer-motion, recharts, Solana wallet adapter
 - **Backend**: Fastify, SQLite (`better-sqlite3`), zod, csv-parse
 - **Solana**: `@solana/web3.js`, `@metaplex-foundation/umi`, `@metaplex-foundation/mpl-token-metadata`
-- **Social**: Tapestry REST API proxy
 
 ## Monorepo Structure
 
@@ -125,12 +122,12 @@ evm_address,solana_wallet
 
 ### Manual Wallet Input
 
-- Admin can also paste Solana wallets manually (one per line)
+- Admin can paste Solana wallets manually (one per line)
 - Manual entries are merged with CSV results
 
 ### Import Report
 
-Upload response includes operational metrics such as:
+Upload response includes:
 
 - inserted
 - matched / unmatchedA / unmatchedB
@@ -149,8 +146,6 @@ Copy `.env.example` to `.env` and configure:
 | `METADATA_URI` | Pinata IPFS metadata JSON URL | `https://gateway.pinata.cloud/ipfs/<cid>` |
 | `DB_PATH` | SQLite database path | `./data/revivepass.sqlite` |
 | `NEXT_PUBLIC_API_URL` | Frontend API base URL | `http://localhost:4000` |
-| `TAPESTRY_API_URL` | Tapestry API base URL | `https://api.usetapestry.dev` |
-| `TAPESTRY_API_KEY` | Tapestry API key | `replace-with-tapestry-api-key` |
 | `ADMIN_WALLETS` | Comma-separated admin wallet allowlist | `<wallet1>,<wallet2>` |
 | `ADMIN_SESSION_HOURS` | Admin session TTL in hours | `24` |
 
@@ -212,19 +207,6 @@ Local services:
 - `POST /migrations/:slug/snapshot` (admin)
 - `POST /migrations/:slug/status` (admin)
 
-### Social Proxy
-
-- `POST /api/social/profile`
-- `POST /api/social/follow`
-- `POST /api/social/unfollow`
-- `POST /api/social/post`
-- `POST /api/social/like`
-- `POST /api/social/comment`
-- `GET /api/social/feed`
-- `GET /api/social/trending`
-- `GET /api/social/search`
-- `GET /api/social/post/:postId`
-
 ## Testing & Validation
 
 ```bash
@@ -238,9 +220,7 @@ Recommended end-to-end local validation:
 2. Create migration + upload whitelist + set status `open`
 3. Claim from `/claim/:slug` with eligible and non-eligible wallets
 4. Confirm dashboard stats update
-5. Verify social posting on `/social`
 
 ## License
 
 MIT
-

@@ -15,11 +15,7 @@ const checklist = [
   },
   {
     title: "Community revival dashboard",
-    body: "Track conversion progress and social activity with migration analytics.",
-  },
-  {
-    title: "Tapestry social activation",
-    body: "Publish migration announcements through Tapestry Social and engage with your community.",
+    body: "Track conversion progress with migration analytics and claim history.",
   },
 ];
 

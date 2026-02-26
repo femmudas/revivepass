@@ -84,8 +84,7 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
     const isBackendEndpoint =
       normalizedPath.startsWith("/migrations") ||
       normalizedPath.startsWith("/auth/") ||
-      normalizedPath.startsWith("/admin/auth") ||
-      normalizedPath.startsWith("/api/social");
+      normalizedPath.startsWith("/admin/auth");
 
     if (response.status === 404 && isBackendEndpoint) {
       if (!API_BASE) {

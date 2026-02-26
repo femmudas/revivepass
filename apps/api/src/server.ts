@@ -5,7 +5,6 @@ import { env } from "./config.js";
 import { runMigrations } from "./db.js";
 import { registerMigrationRoutes } from "./routes/migrations.js";
 import { registerAuthRoutes } from "./routes/auth.js";
-import { registerSocialRoutes } from "./routes/social.js";
 
 const app = Fastify({ logger: true, trustProxy: true });
 
@@ -17,7 +16,6 @@ runMigrations();
 app.get("/health", async () => ({ ok: true, app: "revivepass-api" }));
 await registerAuthRoutes(app);
 await registerMigrationRoutes(app);
-await registerSocialRoutes(app);
 
 try {
   await app.listen({ port: env.PORT, host: "0.0.0.0" });

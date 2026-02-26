@@ -20,8 +20,6 @@ const schema = z.object({
     .default(
       "https://gateway.pinata.cloud/ipfs/bafybeidxodle6nc54u6igkez7tuve24utvtbhmldxal5ewbsmpuaskkj4u"
     ),
-  TAPESTRY_API_URL: z.string().url().default("https://api.usetapestry.dev"),
-  TAPESTRY_API_KEY: z.string().default(""),
   ADMIN_WALLETS: z.string().default(""),
   ADMIN_SESSION_HOURS: z.coerce.number().int().min(1).max(168).default(24),
   DB_PATH: z.string().min(1).default("./data/revivepass.sqlite"),

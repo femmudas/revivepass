@@ -6,14 +6,12 @@ import { Check, ChevronDown, Copy, ExternalLink, Loader2, LogOut, Menu, Wallet, 
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import bs58 from "bs58";
-import Link from "next/link";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { apiRequest } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { socialApi } from "@/lib/social";
 
 type Tab = "home" | "create" | "claim" | "dashboard" | "checklist";
 
@@ -406,17 +404,7 @@ export default function RevivePassPortal() {
         }
       );
       setClaimResult({ tx: res.txSignature, mint: res.mintAddress, explorer: res.explorer });
-
-      let socialMessage = "Tapestry post skipped.";
-      try {
-        const profile = await socialApi.createOrGetProfile(wallet);
-        await socialApi.postMigration(profile.profile.id, slug);
-        socialMessage = "Tapestry announcement posted.";
-      } catch (socialError) {
-        socialMessage = `Tapestry post failed: ${(socialError as Error).message}`;
-      }
-
-      setNotice(socialMessage);
+      setNotice("Claim completed successfully.");
       setEligibilityState("done");
     } catch (e) {
       const message = (e as Error).message;
@@ -511,12 +499,6 @@ export default function RevivePassPortal() {
                   {item.label}
                 </button>
               ))}
-              <Link
-                href="/social"
-                className="rounded-lg border border-border px-3 py-1.5 text-sm text-muted transition hover:border-neon/60 hover:text-foreground"
-              >
-                Social
-              </Link>
             </nav>
 
             <div className="flex items-center gap-2">
@@ -547,13 +529,6 @@ export default function RevivePassPortal() {
                     {item.label}
                   </button>
                 ))}
-                <Link
-                  href="/social"
-                  className="rounded-lg border border-border px-3 py-2 text-center text-sm text-muted hover:border-neon/60"
-                  onClick={() => setMobileOpen(false)}
-                >
-                  Social
-                </Link>
               </div>
             </div>
           )}
@@ -587,9 +562,6 @@ export default function RevivePassPortal() {
                   </Button>
                   <Button size="lg" variant="outline" onClick={() => openTab("checklist")}>
                     Migration Guide
-                  </Button>
-                  <Button size="lg" variant="ghost" asChild>
-                    <Link href="/social">Open Social Layer</Link>
                   </Button>
                 </div>
               </div>

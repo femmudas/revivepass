@@ -1,5 +1,5 @@
 import type { SnapshotRow } from "./csv.js";
-import { mergeAddresses } from "./tapestry.js";
+import { PublicKey } from "@solana/web3.js";
 
 export type SnapshotMergeResult = {
   rows: SnapshotRow[];
@@ -8,6 +8,46 @@ export type SnapshotMergeResult = {
   manualInserted: number;
   duplicatesIgnored: number;
   invalidEntries: string[];
+};
+
+type MergeAddressesResult = {
+  merged: string[];
+  invalid: string[];
+  duplicatesIgnored: number;
+};
+
+const normalizeWalletAddress = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    return new PublicKey(trimmed).toBase58();
+  } catch {
+    return null;
+  }
+};
+
+const mergeAddresses = (csvAddresses: string[], manualAddresses: string[]): MergeAddressesResult => {
+  const merged: string[] = [];
+  const invalid: string[] = [];
+  let duplicatesIgnored = 0;
+  const seen = new Set<string>();
+
+  for (const raw of [...csvAddresses, ...manualAddresses]) {
+    const normalized = normalizeWalletAddress(raw);
+    if (!normalized) {
+      if (raw.trim()) invalid.push(raw.trim());
+      continue;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      duplicatesIgnored += 1;
+      continue;
+    }
+    seen.add(key);
+    merged.push(normalized);
+  }
+
+  return { merged, invalid, duplicatesIgnored };
 };
 
 const splitAddressEntries = (value: string): string[] =>

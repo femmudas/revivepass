@@ -9,7 +9,6 @@ import { apiRequest } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { socialApi } from "@/lib/social";
 
 type Eligibility = {
   eligible: boolean;
@@ -126,17 +125,6 @@ export default function ClaimPage() {
           : "Revival Pass minted successfully."
       );
       setExplorer(claimRes.explorer);
-
-      let socialMessage = "Tapestry post skipped.";
-      try {
-        const profile = await socialApi.createOrGetProfile(wallet);
-        await socialApi.postMigration(profile.profile.id, slug);
-        socialMessage = "Tapestry announcement posted.";
-      } catch (socialError) {
-        socialMessage = `Tapestry post failed: ${(socialError as Error).message}`;
-      }
-
-      setStatus((prev) => `${prev} ${socialMessage}`.trim());
     } catch (e) {
       setStatus((e as Error).message);
     } finally {
